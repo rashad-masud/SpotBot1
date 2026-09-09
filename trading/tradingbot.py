@@ -60,7 +60,8 @@ class TradingBot:
         if self.executor.position:
             if self.executor.manage_position(
                 candle["close"], candle_return,
-                tick_id=self.tick_id, candle_id=self.current_candle_id
+                tick_id=self.tick_id, candle_id=self.current_candle_id,
+                candles=candles, market_analysis=analysis,
             ):
                 if self.on_trade_closed:
                     self.on_trade_closed()

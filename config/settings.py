@@ -24,9 +24,16 @@ MAX_TOTAL_EXPOSURE_PCT = float(os.getenv("MAX_TOTAL_EXPOSURE_PCT", "0.35"))
 MIN_STOP_PCT = float(os.getenv("MIN_STOP_PCT", "0.012"))
 MAX_STOP_PCT = float(os.getenv("MAX_STOP_PCT", "0.05"))
 VOL_STOP_MULTIPLIER = float(os.getenv("VOL_STOP_MULTIPLIER", "2.2"))
-TRAIL_TRIGGER_PNL = float(os.getenv("TRAIL_TRIGGER_PNL", "0.02"))
+# Kept for configuration compatibility.  Profit protection is intentionally
+# activated by TAKE_PROFIT_PCT, not by an earlier trailing threshold.
+TRAIL_TRIGGER_PNL = float(os.getenv("TRAIL_TRIGGER_PNL", "0.06"))
 TRAIL_DISTANCE_PCT = float(os.getenv("TRAIL_DISTANCE_PCT", "0.007"))
 TAKE_PROFIT_PCT = float(os.getenv("TAKE_PROFIT_PCT", "0.06"))
+PROFIT_FLOOR_PCT = float(os.getenv("PROFIT_FLOOR_PCT", "0.015"))
+MAX_PROFIT_GIVEBACK_PCT = float(os.getenv("MAX_PROFIT_GIVEBACK_PCT", "0.012"))
+REVERSAL_CONFIRM_CANDLES = int(os.getenv("REVERSAL_CONFIRM_CANDLES", "2"))
+REVERSAL_SCORE_REQUIRED = int(os.getenv("REVERSAL_SCORE_REQUIRED", "3"))
+REVERSAL_VOLUME_SPIKE = float(os.getenv("REVERSAL_VOLUME_SPIKE", "1.20"))
 REINVEST_PROFITS = True
 
 # Regime / strategy
