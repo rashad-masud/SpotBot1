@@ -4,6 +4,8 @@ from config.settings import (
     HISTORICAL_CANDLE_ANALYSIS,
     HISTORICAL_CANDLE_TIMEFRAME,
     TIMEFRAME,
+    IN_TRADE_ANALYSIS_TIMEFRAME,
+    IN_TRADE_ANALYSIS_WARMUP_CANDLES,
 )
 
 
@@ -76,4 +78,21 @@ def warmup_engine(exchange, bot, internal_symbol, exchange_symbol):
         f"[WARMUP] Loaded {len(ohlcv)} {HISTORICAL_CANDLE_TIMEFRAME} candles "
         f"({HISTORICAL_CANDLE_ANALYSIS} lookback) for {exchange_symbol}; "
         "historical candles cannot trigger an entry."
+    )
+
+
+def warmup_in_trade_engine(exchange, bot, internal_symbol, exchange_symbol):
+    """Seed the dedicated reversal-analysis engine without managing a trade."""
+    ohlcv = exchange.fetch_ohlcv(
+        exchange_symbol, timeframe=IN_TRADE_ANALYSIS_TIMEFRAME,
+        limit=max(IN_TRADE_ANALYSIS_WARMUP_CANDLES, 60),
+    )
+    for candle in ohlcv or []:
+        bot.in_trade_signal_engine.update(internal_symbol, {
+            "timestamp": candle[0], "open": candle[1], "high": candle[2],
+            "low": candle[3], "close": candle[4], "volume": candle[5],
+        })
+    print(
+        f"[WARMUP] Loaded {len(ohlcv or [])} {IN_TRADE_ANALYSIS_TIMEFRAME} "
+        "candles for in-trade analysis; they cannot create or close a trade."
     )

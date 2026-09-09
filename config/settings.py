@@ -1,13 +1,18 @@
 """Spot trading bot configuration. Secrets are read from environment variables."""
 import os
 
-TIMEFRAME = os.getenv("TIMEFRAME", "5m")
+# Entries and open-position analysis deliberately use independent feeds.
+# TIMEFRAME remains an alias for older callers that still import it.
+ENTRY_SIGNAL_TIMEFRAME = os.getenv("ENTRY_SIGNAL_TIMEFRAME", os.getenv("TIMEFRAME", "5m")).strip().lower()
+IN_TRADE_ANALYSIS_TIMEFRAME = os.getenv("IN_TRADE_ANALYSIS_TIMEFRAME", "1m").strip().lower()
+IN_TRADE_ANALYSIS_WARMUP_CANDLES = int(os.getenv("IN_TRADE_ANALYSIS_WARMUP_CANDLES", "60"))
+TIMEFRAME = ENTRY_SIGNAL_TIMEFRAME
 
 # Historical context required before the bot can consider its first live entry.
 # Examples: "5m", "1h", "24h", "1d", "2d", "3h". This is a LOOKBACK
 # duration; the candles themselves use TIMEFRAME unless overridden below.
 HISTORICAL_CANDLE_ANALYSIS = os.getenv("HISTORICAL_CANDLE_ANALYSIS", "15m").strip().lower()
-HISTORICAL_CANDLE_TIMEFRAME = os.getenv("HISTORICAL_CANDLE_TIMEFRAME", TIMEFRAME).strip().lower()
+HISTORICAL_CANDLE_TIMEFRAME = os.getenv("HISTORICAL_CANDLE_TIMEFRAME", ENTRY_SIGNAL_TIMEFRAME).strip().lower()
 
 # Never enter immediately from the warm-up candles. The first trade decision is
 # made only after a newly CLOSED live candle arrives.
@@ -19,22 +24,26 @@ STARTING_CAPITAL = float(os.getenv("STARTING_CAPITAL", "1000"))
 TAKER_FEE_PCT = float(os.getenv("TAKER_FEE_PCT", "0.001"))
 
 # Risk
+# Initial hard stop is volatility-aware and bounded by MIN/MAX below.
 RISK_PER_TRADE_PCT = float(os.getenv("RISK_PER_TRADE_PCT", "0.01"))
 MAX_TOTAL_EXPOSURE_PCT = float(os.getenv("MAX_TOTAL_EXPOSURE_PCT", "0.35"))
 MIN_STOP_PCT = float(os.getenv("MIN_STOP_PCT", "0.009"))
 MAX_STOP_PCT = float(os.getenv("MAX_STOP_PCT", "0.05"))
 VOL_STOP_MULTIPLIER = float(os.getenv("VOL_STOP_MULTIPLIER", "1.8"))
-# TAKE_PROFIT_PCT is the profit-protection activation threshold, not an exit.
-# TRAIL_TRIGGER_PNL is retained for existing environment-file compatibility.
-TRAIL_TRIGGER_PNL = float(os.getenv("TRAIL_TRIGGER_PNL", "0.01"))
+# PROFIT_PROTECTION_TRIGGER_PCT is an activation threshold, never a sell target.
+# Legacy names remain aliases so existing environment files continue to work.
+PROFIT_PROTECTION_TRIGGER_PCT = float(os.getenv(
+    "PROFIT_PROTECTION_TRIGGER_PCT", os.getenv("TAKE_PROFIT_PCT", "0.01")
+))
+TAKE_PROFIT_PCT = PROFIT_PROTECTION_TRIGGER_PCT
+TRAIL_TRIGGER_PNL = float(os.getenv("TRAIL_TRIGGER_PNL", str(PROFIT_PROTECTION_TRIGGER_PCT)))
 TRAIL_DISTANCE_PCT = float(os.getenv("TRAIL_DISTANCE_PCT", "0.007"))
-TAKE_PROFIT_PCT = float(os.getenv("TAKE_PROFIT_PCT", "0.01"))
+PROFIT_TRAIL_ATR_MULTIPLIER = float(os.getenv("PROFIT_TRAIL_ATR_MULTIPLIER", "1.0"))
 PROFIT_FLOOR_PCT = float(os.getenv("PROFIT_FLOOR_PCT", "0.002"))
 MAX_PROFIT_GIVEBACK_PCT = float(os.getenv("MAX_PROFIT_GIVEBACK_PCT", "0.004"))
 REVERSAL_CONFIRM_CANDLES = int(os.getenv("REVERSAL_CONFIRM_CANDLES", "3"))
 REVERSAL_SCORE_REQUIRED = int(os.getenv("REVERSAL_SCORE_REQUIRED", "4"))
 REVERSAL_VOLUME_SPIKE = float(os.getenv("REVERSAL_VOLUME_SPIKE", "1.20"))
-REINVEST_PROFITS = True
 
 # Regime / strategy
 REGIME_LOOKBACK_CANDLES = int(os.getenv("REGIME_LOOKBACK_CANDLES", "50"))
@@ -48,7 +57,6 @@ MIN_TREND_AGE_TO_TRADE = int(os.getenv("MIN_TREND_AGE_TO_TRADE", "2"))
 TRADING_SYMBOL = os.getenv("TRADING_SYMBOL", "").strip().upper()
 
 # Scanner (used only when TRADING_SYMBOL is empty)
-TOP_GAINER_LOOKBACK_HOURS = int(os.getenv("TOP_GAINER_LOOKBACK_HOURS", "12"))
 TOP_GAINER_COUNT = int(os.getenv("TOP_GAINER_COUNT", "10"))
 MIN_VOLUME_USDT = float(os.getenv("MIN_VOLUME_USDT", "1000000"))
 LARGE_CAP_BLACKLIST = {"BTC", "ETH", "SOL", "XRP", "BNB"}

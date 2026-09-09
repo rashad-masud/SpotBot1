@@ -77,6 +77,14 @@ class TradeJournal:
             "leverage": leverage, "stop_pct": stop_pct,
             "open_candle_id": open_candle_id, "open_tick_id": open_tick_id,
         }
+        # Persist immediately so an open position survives process inspection
+        # and the journal does not depend on a later close event.
+        with open(self.file_path, "a", newline="") as f:
+            csv.writer(f).writerow([
+                self._last_open["timestamp"], trade_id, symbol, side, regime,
+                entry_price, "", size, leverage, stop_pct, "", "", "open",
+                open_candle_id or "", "", open_tick_id or "", "",
+            ])
         return trade_id
 
     def record_close(self, *, trade_id=None, side=None, entry_price=None, exit_price=None,

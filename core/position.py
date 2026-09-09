@@ -20,6 +20,7 @@ class Position:
     peak_pnl_pct: float = 0.0
     protected_pnl_pct: float = 0.0
     protection_price: Optional[float] = None
+    last_atr_pct: float = 0.0
     reversal_confirmation_count: int = 0
     last_reversal_candle_id: Optional[int] = None
     max_profit: float = 0.0

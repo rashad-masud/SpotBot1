@@ -9,8 +9,11 @@ from trading.spot_trade_executor import SpotTradeExecutor
 from trading.ccxtpapertradeexecutor import CCXTPaperTradeExecutor
 from data_provider.ccxtdatafeed import CCXTDataFeed
 from trading.tradingbot import TradingBot
-from data.warmup import warmup_engine
-from config.settings import HISTORICAL_CANDLE_TIMEFRAME
+from data.warmup import warmup_engine, warmup_in_trade_engine
+from config.settings import (
+    HISTORICAL_CANDLE_TIMEFRAME, ENTRY_SIGNAL_TIMEFRAME,
+    IN_TRADE_ANALYSIS_TIMEFRAME,
+)
 
 
 def build_exchange():
@@ -130,16 +133,21 @@ def run_for_symbol(exchange, symbol, pair):
         return None
 
     bot = TradingBot(engine, manager, executor, on_trade_closed=on_trade_closed)
-    if HISTORICAL_CANDLE_TIMEFRAME != TIMEFRAME:
+    if HISTORICAL_CANDLE_TIMEFRAME != ENTRY_SIGNAL_TIMEFRAME:
         raise ValueError(
             "HISTORICAL_CANDLE_TIMEFRAME must equal TIMEFRAME in this version. "
             "Use HISTORICAL_CANDLE_ANALYSIS to choose how much history to analyze "
-            "(e.g. 24h) while keeping TIMEFRAME=5m."
+            "while keeping HISTORICAL_CANDLE_TIMEFRAME equal to ENTRY_SIGNAL_TIMEFRAME."
         )
 
     warmup_engine(exchange, bot, symbol, pair)
+    warmup_in_trade_engine(exchange, bot, symbol, pair)
 
-    feed = CCXTDataFeed(exchange, pair, TIMEFRAME, bot.on_candle, bot.on_price_tick, stop_flag=stop_flag)
+    feed = CCXTDataFeed(
+        exchange, pair, ENTRY_SIGNAL_TIMEFRAME, bot.on_candle, bot.on_price_tick,
+        stop_flag=stop_flag, analysis_timeframe=IN_TRADE_ANALYSIS_TIMEFRAME,
+        on_in_trade_candle=bot.on_in_trade_candle,
+    )
     print(f"[BOT] Running {'PAPER' if PAPER_TRADE else 'LIVE SPOT'} on {pair}")
     feed.start()
     return executor
@@ -147,7 +155,12 @@ def run_for_symbol(exchange, symbol, pair):
 
 def main():
     print("[MAIN] Spot Trend-Pullback Trading Bot")
-    print(f"[CONFIG] timeframe={TIMEFRAME} historical_analysis={HISTORICAL_CANDLE_ANALYSIS} paper={PAPER_TRADE} risk={RISK_PER_TRADE_PCT:.2%}")
+    print(
+        f"[CONFIG] entry_timeframe={ENTRY_SIGNAL_TIMEFRAME} "
+        f"in_trade_timeframe={IN_TRADE_ANALYSIS_TIMEFRAME} "
+        f"historical_analysis={HISTORICAL_CANDLE_ANALYSIS} "
+        f"paper={PAPER_TRADE} risk={RISK_PER_TRADE_PCT:.2%}"
+    )
     if PAPER_TRADE:
         print("[AUTH] PAPER mode: Binance API key/secret are NOT used")
     else:

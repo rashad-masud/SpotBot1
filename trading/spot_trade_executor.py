@@ -8,7 +8,8 @@ from config.settings import (
     STARTING_CAPITAL, TAKER_FEE_PCT, RISK_PER_TRADE_PCT,
     MAX_TOTAL_EXPOSURE_PCT, MIN_STOP_PCT, MAX_STOP_PCT,
     VOL_STOP_MULTIPLIER,
-    TAKE_PROFIT_PCT, PROFIT_FLOOR_PCT, MAX_PROFIT_GIVEBACK_PCT,
+    PROFIT_PROTECTION_TRIGGER_PCT, PROFIT_FLOOR_PCT, MAX_PROFIT_GIVEBACK_PCT,
+    PROFIT_TRAIL_ATR_MULTIPLIER, TRAIL_DISTANCE_PCT,
     REVERSAL_CONFIRM_CANDLES, REVERSAL_SCORE_REQUIRED,
     REVERSAL_VOLUME_SPIKE,
 )
@@ -75,6 +76,7 @@ class SpotTradeExecutor:
             open_candle_id=candleid,
             open_tick_id=tickid,
             best_price=fill_price,
+            last_atr_pct=max(0.0, float(volatility_pct)),
         )
         self.journal.record_open(symbol, "long", regime, fill_price, size, 1.0, stop_pct,
                                  trade_id=self.position.trade_id,
@@ -102,20 +104,22 @@ class SpotTradeExecutor:
             self._close_position(price, "stop", tick_id, candle_id)
             return True
 
-        # TAKE_PROFIT_PCT is an activation threshold, not an automatic exit.
-        # TRAIL_TRIGGER_PNL/TRAIL_DISTANCE_PCT are retained as configuration
-        # compatibility only; the old early price trail is intentionally gone.
-        if not pos.profit_protection_active and pnl_pct >= TAKE_PROFIT_PCT:
+        # This is an activation threshold, not an automatic exit.
+        if not pos.profit_protection_active and pnl_pct >= PROFIT_PROTECTION_TRIGGER_PCT:
             pos.profit_protection_active = True
             pos.trail_active = True  # compatibility with existing position state
             print(
                 f"[PROFIT PROTECTION] activated {pos.symbol} "
                 f"pnl={pnl_pct:.2%} peak={pos.peak_pnl_pct:.2%} "
-                f"threshold={TAKE_PROFIT_PCT:.2%}"
+                f"threshold={PROFIT_PROTECTION_TRIGGER_PCT:.2%}"
             )
 
         if not pos.profit_protection_active:
-            return False
+            # Before protection, ticks still update peak PnL but cannot trigger
+            # a profit exit. The hard stop above remains active.
+            return False if not candles or candle_id is None or pos.last_reversal_candle_id == candle_id else self._log_in_trade_analysis(
+                pos, price, pnl_pct, candles, candle_id, market_analysis
+            )
 
         # These protections rise with each new peak. The allowed pullback
         # narrows as profit grows, while the maximum giveback stays a hard cap.
@@ -139,6 +143,7 @@ class SpotTradeExecutor:
 
         pos.last_reversal_candle_id = candle_id
         reversal = self._reversal_analysis(candles, market_analysis)
+        pos.last_atr_pct = reversal["atr"] / price if price else pos.last_atr_pct
         score = reversal["score"]
         if score >= REVERSAL_SCORE_REQUIRED:
             pos.reversal_confirmation_count += 1
@@ -158,11 +163,26 @@ class SpotTradeExecutor:
             f"ema20_slope={reversal['ema20_slope']:.4%} RSI14={reversal['rsi']:.1f} "
             f"rsi_change={reversal['rsi_change']:.1f} ATR={reversal['atr']:.8f} "
             f"volatility={reversal['volatility']:.2%} rel_volume={reversal['relative_volume']:.2f} "
-            f"trend_strength={reversal['trend_strength']:.2f} signals={active_signals}"
+            f"trend_strength={reversal['trend_strength']:.2f} signals={active_signals} action=HOLD"
         )
         if pos.reversal_confirmation_count >= REVERSAL_CONFIRM_CANDLES:
             self._close_position(price, "confirmed_reversal", tick_id, candle_id)
             return True
+        return False
+
+    def _log_in_trade_analysis(self, pos, price, pnl_pct, candles, candle_id, market_analysis):
+        pos.last_reversal_candle_id = candle_id
+        reversal = self._reversal_analysis(candles, market_analysis)
+        pos.last_atr_pct = reversal["atr"] / price if price else pos.last_atr_pct
+        print(
+            f"[POSITION ANALYSIS] {pos.symbol} pnl={pnl_pct:.2%} "
+            f"peak={pos.peak_pnl_pct:.2%} protection=inactive "
+            f"EMA20={reversal['ema20']:.8f} EMA50={reversal['ema50']:.8f} "
+            f"ema20_slope={reversal['ema20_slope']:.4%} RSI14={reversal['rsi']:.1f} "
+            f"rsi_change={reversal['rsi_change']:.1f} ATR={reversal['atr']:.8f} "
+            f"volatility={reversal['volatility']:.2%} rel_volume={reversal['relative_volume']:.2f} "
+            f"trend_strength={reversal['trend_strength']:.2f} action=HOLD"
+        )
         return False
 
     @staticmethod
@@ -173,10 +193,14 @@ class SpotTradeExecutor:
         step reduces the permitted pullback, so the protection level climbs
         faster than price and cannot loosen after a new high.
         """
-        activation = max(TAKE_PROFIT_PCT, 1e-9)
+        activation = max(PROFIT_PROTECTION_TRIGGER_PCT, 1e-9)
         profit_steps = max(0.0, (pos.peak_pnl_pct - activation) / activation)
         progressive_distance = TRAIL_DISTANCE_PCT / (1.0 + profit_steps)
-        allowed_pullback = min(MAX_PROFIT_GIVEBACK_PCT, progressive_distance)
+        volatility_distance = pos.last_atr_pct * PROFIT_TRAIL_ATR_MULTIPLIER
+        allowed_pullback = min(
+            MAX_PROFIT_GIVEBACK_PCT,
+            max(progressive_distance, volatility_distance),
+        )
         protected_pnl = max(PROFIT_FLOOR_PCT, pos.peak_pnl_pct - allowed_pullback)
         return protected_pnl, allowed_pullback
 
@@ -297,7 +321,16 @@ class SpotTradeExecutor:
             open_candle_id=pos.open_candle_id, close_candle_id=candle_id,
             open_tick_id=pos.open_tick_id, close_tick_id=tick_id,
         )
-        print(f"[SPOT CLOSE] SELL {pos.symbol} price={price:.8f} pnl={pnl:.2f} reason={reason} balance={self.balance:.2f}")
+        final_pnl_pct = pos.pnl_pct(price) / 100.0
+        giveback = max(0.0, pos.peak_pnl_pct - final_pnl_pct)
+        print(
+            f"[SPOT CLOSE] SELL {pos.symbol} entry={pos.entry_price:.8f} "
+            f"exit={price:.8f} peak_price={pos.best_price:.8f} "
+            f"peak_pnl={pos.peak_pnl_pct:.2%} final_pnl={final_pnl_pct:.2%} "
+            f"giveback={giveback:.2%} pnl={pnl:.2f} reason={reason} "
+            f"open_candle={pos.open_candle_id} close_candle={candle_id} "
+            f"open_tick={pos.open_tick_id} close_tick={tick_id} balance={self.balance:.2f}"
+        )
         self.asset_balance = 0.0
         self.position = None
 

@@ -1,10 +1,12 @@
 from config.settings import ALLOW_ENTRY_ON_FIRST_LIVE_CANDLE, DIAGNOSTIC_LOGGING
+from signals.signal_engine import SignalEngine
 from strategy.trend_volatility_strategy import SpotTrendPullbackStrategy
 
 
 class TradingBot:
     def __init__(self, signal_engine, strategy_manager, executor, on_trade_closed=None):
         self.signal_engine = signal_engine
+        self.in_trade_signal_engine = SignalEngine()
         self.strategy_manager = strategy_manager
         self.executor = executor
         self.on_trade_closed = on_trade_closed
@@ -20,6 +22,28 @@ class TradingBot:
                 price, tick_id=self.tick_id, candle_id=self.current_candle_id
             )
             if closed and self.on_trade_closed:
+                self.on_trade_closed()
+
+    def on_in_trade_candle(self, symbol, candle):
+        """Process only a newly closed dedicated in-trade analysis candle.
+
+        This feed never evaluates entries. Its independent timeframe allows
+        reversals to be confirmed faster without weakening the entry setup.
+        """
+        self.in_trade_signal_engine.update(symbol, candle)
+        if not self.executor.position:
+            return
+        candles = list(self.in_trade_signal_engine.candles[symbol])
+        analysis = self.in_trade_signal_engine.get_market_analysis(symbol)
+        candle_return = None
+        if len(candles) >= 2:
+            previous_close = float(candles[-2]["close"])
+            candle_return = (float(candle["close"]) - previous_close) / previous_close
+        if self.executor.manage_position(
+            float(candle["close"]), candle_return, tick_id=self.tick_id,
+            candle_id=candle["timestamp"], candles=candles, market_analysis=analysis,
+        ):
+            if self.on_trade_closed:
                 self.on_trade_closed()
 
     def _print_decision_report(self, symbol, report, first_live=False):
@@ -51,21 +75,9 @@ class TradingBot:
         candles = list(self.signal_engine.candles[symbol])
         self.live_candle_count += 1
 
-        candle_return = None
-        if len(candles) >= 2:
-            prev_close = candles[-2]["close"]
-            candle_return = (candle["close"] - prev_close) / prev_close
-            self.executor.update_candle_context(candle_return, analysis.volatility_pct)
-
         if self.executor.position:
-            if self.executor.manage_position(
-                candle["close"], candle_return,
-                tick_id=self.tick_id, candle_id=self.current_candle_id,
-                candles=candles, market_analysis=analysis,
-            ):
-                if self.on_trade_closed:
-                    self.on_trade_closed()
-                return
+            # Entry-timeframe candles are never used to close a position.
+            return
 
         # First live candle establishes the post-warmup decision point only.
         if self.live_candle_count == 1 and not ALLOW_ENTRY_ON_FIRST_LIVE_CANDLE:
