@@ -3,6 +3,7 @@ import tempfile
 import unittest
 
 from core.enums import SignalType
+from config.settings import REVERSAL_CONFIRM_CANDLES, REVERSAL_SCORE_REQUIRED
 from signals.signal import Signal
 from trading.spot_trade_executor import SpotTradeExecutor
 
@@ -40,11 +41,11 @@ class ProfitManagementTests(unittest.TestCase):
         os.chdir(self.previous_directory)
         self.temp_directory.cleanup()
 
-    def activate_protection(self, price=106.0):
+    def activate_protection(self, price=101.0):
         self.assertFalse(self.executor.manage_position(price, tick_id=1))
         self.assertTrue(self.executor.position.profit_protection_active)
 
-    def test_six_percent_activates_without_immediate_sale(self):
+    def test_one_percent_activates_without_immediate_sale(self):
         self.activate_protection()
         self.assertIsNotNone(self.executor.position)
 
@@ -52,18 +53,18 @@ class ProfitManagementTests(unittest.TestCase):
         self.activate_protection()
         candles = healthy_candles()
         self.assertFalse(self.executor.manage_position(
-            106.2, candle_id=100, candles=candles,
+            101.2, candle_id=100, candles=candles,
         ))
         self.assertIsNotNone(self.executor.position)
         self.assertEqual(self.executor.position.reversal_confirmation_count, 0)
 
-    def test_confirmed_reversal_exits_after_two_closed_candles(self):
+    def test_confirmed_reversal_exits_after_required_closed_candles(self):
         self.activate_protection()
         # Keep the protection safety thresholds out of this test so it verifies
         # the candle-confirmation state machine itself.
-        self.executor.position.peak_pnl_pct = 0.07
+        self.executor.position.peak_pnl_pct = 0.065
         reversal = {
-            "score": 3,
+            "score": REVERSAL_SCORE_REQUIRED,
             "active_signals": ["bearish_candle", "rsi_falling", "lower_high_structure"],
             "ema20": 105.0, "ema50": 103.0, "ema20_slope": -0.001,
             "rsi": 48.0, "rsi_change": -4.0, "atr": 1.0, "volatility": 0.01,
@@ -71,23 +72,29 @@ class ProfitManagementTests(unittest.TestCase):
         }
         self.executor._reversal_analysis = lambda candles, analysis: reversal
         candles = healthy_candles()
-        self.assertFalse(self.executor.manage_position(106.5, candle_id=101, candles=candles))
-        self.assertEqual(self.executor.position.reversal_confirmation_count, 1)
-        self.assertTrue(self.executor.manage_position(106.5, candle_id=102, candles=candles))
+        for candle_id in range(101, 101 + REVERSAL_CONFIRM_CANDLES - 1):
+            self.assertFalse(self.executor.manage_position(106.5, candle_id=candle_id, candles=candles))
+        self.assertEqual(
+            self.executor.position.reversal_confirmation_count,
+            REVERSAL_CONFIRM_CANDLES - 1,
+        )
+        self.assertTrue(self.executor.manage_position(
+            106.5, candle_id=101 + REVERSAL_CONFIRM_CANDLES - 1, candles=candles,
+        ))
         self.assertIsNone(self.executor.position)
 
     def test_profit_floor_exits_after_protection_is_active(self):
         self.activate_protection()
-        self.assertTrue(self.executor.manage_position(101.4, tick_id=2))
+        self.assertTrue(self.executor.manage_position(100.1, tick_id=2))
         self.assertIsNone(self.executor.position)
 
     def test_maximum_profit_giveback_exits_without_candle_confirmation(self):
-        self.activate_protection(110.0)
-        self.assertTrue(self.executor.manage_position(108.7, tick_id=2))
+        self.activate_protection(102.0)
+        self.assertTrue(self.executor.manage_position(101.5, tick_id=2))
         self.assertIsNone(self.executor.position)
 
     def test_hard_stop_remains_active_on_a_price_tick(self):
-        self.assertTrue(self.executor.manage_position(98.5, tick_id=1))
+        self.assertTrue(self.executor.manage_position(98.0, tick_id=1))
         self.assertIsNone(self.executor.position)
 
     def test_one_isolated_red_candle_does_not_exit(self):
@@ -99,10 +106,17 @@ class ProfitManagementTests(unittest.TestCase):
             high=previous["high"] + 0.3, volume=100,
         ))
         self.assertFalse(self.executor.manage_position(
-            106.1, candle_id=103, candles=candles,
+            101.1, candle_id=103, candles=candles,
         ))
         self.assertIsNotNone(self.executor.position)
-        self.assertLess(self.executor.position.reversal_confirmation_count, 2)
+        self.assertLess(self.executor.position.reversal_confirmation_count, REVERSAL_CONFIRM_CANDLES)
+
+    def test_protection_price_rises_and_tightens_as_profit_grows(self):
+        self.activate_protection(101.0)
+        first_protection = self.executor.position.protection_price
+        self.assertFalse(self.executor.manage_position(102.0, tick_id=2))
+        self.assertGreater(self.executor.position.protection_price, first_protection)
+        self.assertGreater(self.executor.position.protected_pnl_pct, 0.01)
 
     def test_reversal_analysis_scores_multiple_bearish_signals(self):
         candles = [

@@ -8,7 +8,7 @@ This version has been converted from a futures/shorting bot into a **Binance spo
 - Entry is `BUY`; exit is `SELL`.
 - Risk-based position sizing with a maximum quote-currency exposure.
 - Dynamic ATR-style hard stop and profit-protection exit.
-- Profit protection activates at `TAKE_PROFIT_PCT`; it does not sell there.
+- Profit protection activates at `TAKE_PROFIT_PCT` (1% by default); it does not sell there.
   After activation, exits require a confirmed multi-signal reversal or the
   profit-floor / maximum-giveback safety limits. The hard stop remains tick-based.
 - Exchange precision is applied to live market orders.
@@ -104,17 +104,18 @@ DIAGNOSTIC_LOGGING=true
 The default profit-management settings are:
 
 ```env
-TAKE_PROFIT_PCT=0.06
-TRAIL_TRIGGER_PNL=0.06
+TAKE_PROFIT_PCT=0.01
+TRAIL_TRIGGER_PNL=0.01
 TRAIL_DISTANCE_PCT=0.007
-PROFIT_FLOOR_PCT=0.015
-MAX_PROFIT_GIVEBACK_PCT=0.012
-REVERSAL_CONFIRM_CANDLES=2
-REVERSAL_SCORE_REQUIRED=3
+PROFIT_FLOOR_PCT=0.002
+MAX_PROFIT_GIVEBACK_PCT=0.004
+REVERSAL_CONFIRM_CANDLES=3
+REVERSAL_SCORE_REQUIRED=4
 REVERSAL_VOLUME_SPIKE=1.20
 ```
 
-The legacy trail settings are retained for environment compatibility, but do
-not activate an early trailing exit. Reversal scoring is calculated only from
-newly closed 5-minute candles; price ticks still enforce the hard stop and the
-two profit-protection safety exits immediately.
+The compatibility trail trigger now matches the 1% protection activation.
+The protected stop begins by locking a small profit, rises with every new peak,
+and tightens its allowed pullback as profit increases. Reversal scoring is
+calculated only from newly closed 5-minute candles; price ticks still enforce
+the hard stop and all profit-protection safety exits immediately.

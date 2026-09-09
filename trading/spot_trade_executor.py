@@ -117,6 +117,11 @@ class SpotTradeExecutor:
         if not pos.profit_protection_active:
             return False
 
+        # These protections rise with each new peak. The allowed pullback
+        # narrows as profit grows, while the maximum giveback stays a hard cap.
+        pos.protected_pnl_pct, trailing_giveback = self._protected_pnl_level(pos)
+        pos.protection_price = pos.entry_price * (1 + pos.protected_pnl_pct)
+
         # Safety exits are tick-based and do not wait for a candle/reversal.
         if pnl_pct <= PROFIT_FLOOR_PCT:
             self._close_position(price, "profit_floor", tick_id, candle_id)
@@ -124,6 +129,9 @@ class SpotTradeExecutor:
         giveback = pos.peak_pnl_pct - pnl_pct
         if giveback >= MAX_PROFIT_GIVEBACK_PCT:
             self._close_position(price, "max_profit_giveback", tick_id, candle_id)
+            return True
+        if pnl_pct <= pos.protected_pnl_pct:
+            self._close_position(price, "profit_protection_stop", tick_id, candle_id)
             return True
 
         if not candles or candle_id is None or pos.last_reversal_candle_id == candle_id:
@@ -141,6 +149,9 @@ class SpotTradeExecutor:
         print(
             f"[POSITION ANALYSIS] {pos.symbol} pnl={pnl_pct:.2%} "
             f"peak={pos.peak_pnl_pct:.2%} protection=active "
+            f"protection_pnl={pos.protected_pnl_pct:.2%} "
+            f"protection_price={pos.protection_price:.8f} "
+            f"allowed_pullback={trailing_giveback:.2%} "
             f"reversal_score={score}/{REVERSAL_SCORE_REQUIRED} "
             f"confirmation={pos.reversal_confirmation_count}/{REVERSAL_CONFIRM_CANDLES} "
             f"EMA20={reversal['ema20']:.8f} EMA50={reversal['ema50']:.8f} "
@@ -153,6 +164,21 @@ class SpotTradeExecutor:
             self._close_position(price, "confirmed_reversal", tick_id, candle_id)
             return True
         return False
+
+    @staticmethod
+    def _protected_pnl_level(pos):
+        """Return the rising protected-profit level and current allowed pullback.
+
+        At activation the trade locks a modest profit. Every further profit
+        step reduces the permitted pullback, so the protection level climbs
+        faster than price and cannot loosen after a new high.
+        """
+        activation = max(TAKE_PROFIT_PCT, 1e-9)
+        profit_steps = max(0.0, (pos.peak_pnl_pct - activation) / activation)
+        progressive_distance = TRAIL_DISTANCE_PCT / (1.0 + profit_steps)
+        allowed_pullback = min(MAX_PROFIT_GIVEBACK_PCT, progressive_distance)
+        protected_pnl = max(PROFIT_FLOOR_PCT, pos.peak_pnl_pct - allowed_pullback)
+        return protected_pnl, allowed_pullback
 
     @staticmethod
     def _ema(values, period):
