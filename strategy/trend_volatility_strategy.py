@@ -8,12 +8,18 @@ class SpotTrendPullbackStrategy(BaseStrategy):
 
     Historical candles are context only. A BUY is only generated from a newly
     closed live candle after the configured historical warm-up has completed.
+    The entry uses a 7/9 scored checklist, while regime and tradeability remain
+    hard gates so a high score cannot override an unsafe market state.
     """
 
     supported_regimes = {"trend_up", "breakout"}
+    ENTRY_SCORE_REQUIRED = 7
+    NEAR_PULLBACK_ATR_MULTIPLIER = 2.0
+    RSI_MIN = 40
+    RSI_MAX = 70
 
     def __init__(self):
-        super().__init__(name="SpotTrendPullbackStrategy", version="1.1")
+        super().__init__(name="SpotTrendPullbackStrategy", version="1.2")
 
     def explain(self, ctx):
         candles = ctx.get("candles", [])
@@ -32,7 +38,6 @@ class SpotTrendPullbackStrategy(BaseStrategy):
         rsi = self._rsi(closes, 14)
         atr = self._atr(candles, 14)
         price = closes[-1]
-        prev_high = highs[-2]
         avg_volume = sum(volumes[-20:]) / max(len(volumes[-20:]), 1)
         volume_ratio = volumes[-1] / avg_volume if avg_volume else 1.0
 
@@ -41,25 +46,38 @@ class SpotTrendPullbackStrategy(BaseStrategy):
             "market_tradeable": bool(analysis.should_trade),
             "trend_age": analysis.trend_age >= 3,
             "bullish_structure": ema20 > ema50 and price > ema50,
-            "near_pullback": atr > 0 and min(abs(price - ema20), abs(price - ema50)) <= atr * 1.5,
+            "near_pullback": atr > 0 and min(abs(price - ema20), abs(price - ema50)) <= atr * self.NEAR_PULLBACK_ATR_MULTIPLIER,
             "recent_pullback": min(lows[-5:]) <= ema20 * 1.003,
-            "confirmation": price > prev_high and closes[-1] > float(candles[-1]["open"]),
-            "constructive_rsi": 45 <= rsi <= 68,
+            "confirmation": closes[-1] > float(candles[-1]["open"]),
+            "constructive_rsi": self.RSI_MIN <= rsi <= self.RSI_MAX,
             "volume": volume_ratio >= 0.9,
         }
 
+        score = sum(checks.values())
+        hard_gates_passed = checks["regime"] and checks["market_tradeable"]
+        score_passed = score >= self.ENTRY_SCORE_REQUIRED
+        eligible = hard_gates_passed and score_passed
+
+        failed = [name for name, ok in checks.items() if not ok]
+        passed = [name for name, ok in checks.items() if ok]
+        reason = (
+            f"score={score}/9 required={self.ENTRY_SCORE_REQUIRED}; "
+            f"passed={','.join(passed)}; "
+            f"failed={','.join(failed) if failed else 'none'}"
+        )
         if not checks["regime"]:
-            reason = f"regime={analysis.gen_trend}"
+            reason = f"{reason}; hard_gate=regime:{analysis.gen_trend}"
         elif not checks["market_tradeable"]:
-            reason = "market marked non-tradeable"
-        else:
-            failed = [name for name, ok in checks.items() if not ok]
-            reason = "all entry conditions passed" if not failed else "failed: " + ", ".join(failed)
+            reason = f"{reason}; hard_gate=market_non_tradeable"
+        elif not score_passed:
+            reason = f"{reason}; score_below_threshold"
 
         return {
-            "signal": "BUY" if all(checks.values()) else "WAIT",
+            "signal": "BUY" if eligible else "WAIT",
             "reason": reason,
             "checks": checks,
+            "score": score,
+            "score_required": self.ENTRY_SCORE_REQUIRED,
             "price": price,
             "ema20": ema20,
             "ema50": ema50,
@@ -85,7 +103,8 @@ class SpotTrendPullbackStrategy(BaseStrategy):
             size_factor=1.0,
             price=report["price"],
             reason=(
-                f"trend-pullback EMA20/50 RSI={report['rsi']:.1f} "
+                f"trend-pullback score={report['score']}/9 "
+                f"EMA20/50 RSI={report['rsi']:.1f} "
                 f"vol={report['volume_ratio']:.2f}"
             ),
         )
