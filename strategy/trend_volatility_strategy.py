@@ -2,6 +2,7 @@ from core.enums import SignalType
 from signals.signal import Signal
 from strategy.base_strategy import BaseStrategy
 from config.settings import (
+    MIN_TREND_AGE_TO_TRADE,
     STRATEGY_ATR_PERIOD,
     STRATEGY_CONFIRMATION_REQUIRE_BULLISH_CANDLE,
     STRATEGY_EMA_FAST_PERIOD,
@@ -32,7 +33,7 @@ class SpotTrendPullbackStrategy(BaseStrategy):
     supported_regimes = STRATEGY_SUPPORTED_REGIMES
 
     def __init__(self):
-        super().__init__(name="SpotTrendPullbackStrategy", version="1.3")
+        super().__init__(name="SpotTrendPullbackStrategy", version="1.4")
 
     def explain(self, ctx):
         candles = ctx.get("candles", [])
@@ -43,11 +44,10 @@ class SpotTrendPullbackStrategy(BaseStrategy):
             return {"signal": "WAIT", "reason": f"need {STRATEGY_MIN_CANDLES} candles; have {len(candles)}"}
 
         closes = [float(c["close"]) for c in candles]
-        highs = [float(c["high"]) for c in candles]
         lows = [float(c["low"]) for c in candles]
         volumes = [float(c.get("volume", 0)) for c in candles]
-        ema20 = self._ema(closes, STRATEGY_EMA_FAST_PERIOD)
-        ema50 = self._ema(closes, STRATEGY_EMA_SLOW_PERIOD)
+        ema_fast = self._ema(closes, STRATEGY_EMA_FAST_PERIOD)
+        ema_slow = self._ema(closes, STRATEGY_EMA_SLOW_PERIOD)
         rsi = self._rsi(closes, STRATEGY_RSI_PERIOD)
         atr = self._atr(candles, STRATEGY_ATR_PERIOD)
         price = closes[-1]
@@ -59,10 +59,10 @@ class SpotTrendPullbackStrategy(BaseStrategy):
         checks = {
             "regime": analysis.gen_trend in self.supported_regimes,
             "market_tradeable": bool(analysis.should_trade),
-            "trend_age": analysis.trend_age >= 3,
-            "bullish_structure": ema20 > ema50 and price > ema50,
-            "near_pullback": atr > 0 and min(abs(price - ema20), abs(price - ema50)) <= atr * STRATEGY_NEAR_PULLBACK_ATR_MULTIPLIER,
-            "recent_pullback": min(lows[-STRATEGY_RECENT_PULLBACK_CANDLES:]) <= ema20 * (1 + STRATEGY_RECENT_PULLBACK_EMA_TOLERANCE),
+            "trend_age": analysis.trend_age >= MIN_TREND_AGE_TO_TRADE,
+            "bullish_structure": ema_fast > ema_slow and price > ema_slow,
+            "near_pullback": atr > 0 and min(abs(price - ema_fast), abs(price - ema_slow)) <= atr * STRATEGY_NEAR_PULLBACK_ATR_MULTIPLIER,
+            "recent_pullback": min(lows[-STRATEGY_RECENT_PULLBACK_CANDLES:]) <= ema_fast * (1 + STRATEGY_RECENT_PULLBACK_EMA_TOLERANCE),
             "confirmation": bullish_candle if STRATEGY_CONFIRMATION_REQUIRE_BULLISH_CANDLE else True,
             "constructive_rsi": STRATEGY_RSI_MIN <= rsi <= STRATEGY_RSI_MAX,
             "volume": volume_ratio >= STRATEGY_MIN_VOLUME_RATIO,
@@ -94,8 +94,10 @@ class SpotTrendPullbackStrategy(BaseStrategy):
             "score": score,
             "score_required": STRATEGY_ENTRY_SCORE_REQUIRED,
             "price": price,
-            "ema20": ema20,
-            "ema50": ema50,
+            "ema_fast": ema_fast,
+            "ema_slow": ema_slow,
+            "ema20": ema_fast,
+            "ema50": ema_slow,
             "rsi": rsi,
             "atr": atr,
             "volume_ratio": volume_ratio,
@@ -119,7 +121,7 @@ class SpotTrendPullbackStrategy(BaseStrategy):
             price=report["price"],
             reason=(
                 f"trend-pullback score={report['score']}/9 "
-                f"EMA{STRATEGY_EMA_FAST_PERIOD}/EMA{STRATEGY_EMA_SLOW_PERIOD} "
+                f"EMA{STRATEGY_EMA_FAST_PERIOD}/{STRATEGY_EMA_SLOW_PERIOD} "
                 f"RSI={report['rsi']:.1f} vol={report['volume_ratio']:.2f}"
             ),
         )
@@ -133,7 +135,7 @@ class SpotTrendPullbackStrategy(BaseStrategy):
         return ema
 
     @staticmethod
-    def _rsi(values, period=14):
+    def _rsi(values, period):
         if len(values) < period + 1:
             return 50.0
         gains = []
@@ -149,7 +151,7 @@ class SpotTrendPullbackStrategy(BaseStrategy):
         return 100 - (100 / (1 + avg_gain / avg_loss))
 
     @staticmethod
-    def _atr(candles, period=14):
+    def _atr(candles, period):
         if len(candles) < period + 1:
             return 0.0
         trs = []
