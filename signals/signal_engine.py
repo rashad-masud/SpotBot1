@@ -4,6 +4,8 @@ import statistics
 
 from config.settings import (
     REGIME_LOOKBACK_CANDLES,
+    REGIME_CANDLE_TREND_LOOKBACK,
+    REGIME_CANDLE_TREND_MIN_COUNT,
     MAX_VOLATILITY_TO_AVOID,
     MIN_TREND_PCT,
     TREND_STRENGTH_MIN,
@@ -61,10 +63,10 @@ class SignalEngine:
         self._trend_age[symbol] = self._trend_age.get(symbol, 0) + 1 if previous == value else 1
         self._last_regime[symbol] = value
 
-        recent = candles[-5:]
+        recent = candles[-REGIME_CANDLE_TREND_LOOKBACK:]
         ups = sum(c["close"] > c["open"] for c in recent)
         downs = sum(c["close"] < c["open"] for c in recent)
-        candle_trend = "up" if ups >= 3 else "down" if downs >= 3 else "flat"
+        candle_trend = "up" if ups >= REGIME_CANDLE_TREND_MIN_COUNT else "down" if downs >= REGIME_CANDLE_TREND_MIN_COUNT else "flat"
 
         self.market_analysis[symbol] = MarketAnalysis(
             gen_trend=value,
