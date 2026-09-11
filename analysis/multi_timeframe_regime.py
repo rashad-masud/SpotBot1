@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import time
 from typing import Dict, List, Optional
 
 from config.settings import (
@@ -11,6 +12,9 @@ from config.settings import (
     MARKET_REGIME_UPDATE_INTERVAL_SECONDS,
     MARKET_REGIME_LOG_FILENAME,
     MARKET_REGIME_DECIMAL_PLACES,
+    MARKET_REGIME_TREND_THRESHOLD_FACTOR,
+    MARKET_REGIME_MIN_TREND_PCT,
+    NUMERIC_EPSILON,
 )
 
 
@@ -54,7 +58,7 @@ class MultiTimeframeRegimeTracker:
 
     @staticmethod
     def _pct_change(start: float, end: float) -> float:
-        if not start:
+        if abs(start) <= NUMERIC_EPSILON:
             return 0.0
         return (end - start) / start
 
@@ -68,7 +72,7 @@ class MultiTimeframeRegimeTracker:
         midpoint = (float(candles[0]["high"]) + float(candles[0]["low"])) / 2.0
         final_midpoint = (float(candles[-1]["high"]) + float(candles[-1]["low"])) / 2.0
         midpoint_change = MultiTimeframeRegimeTracker._pct_change(midpoint, final_midpoint)
-        threshold = max(range_pct * 0.25, 0.001)
+        threshold = max(range_pct * MARKET_REGIME_TREND_THRESHOLD_FACTOR, MARKET_REGIME_MIN_TREND_PCT)
         if net_change > threshold and midpoint_change > 0:
             return "TREND_UP"
         if net_change < -threshold and midpoint_change < 0:
@@ -108,7 +112,7 @@ class MultiTimeframeRegimeTracker:
             else:
                 unchanged += 1
             previous_close = close_price
-        position = 0.0 if high == low else (current_price - low) / (high - low)
+        position = 0.0 if abs(high - low) <= NUMERIC_EPSILON else (current_price - low) / (high - low)
         return RegimeSnapshot(
             timeframe=timeframe,
             timestamp=int(selected[-1]["timestamp"]),
@@ -123,8 +127,8 @@ class MultiTimeframeRegimeTracker:
             max_down_excursion_pct=max(down_excursions),
             current_price=current_price,
             position_in_range_pct=max(0.0, min(1.0, position)),
-            distance_to_high_pct=self._pct_change(high, current_price),
-            distance_to_low_pct=self._pct_change(low, current_price),
+            distance_to_high_pct=max(0.0, self._pct_change(current_price, high)),
+            distance_to_low_pct=max(0.0, self._pct_change(low, current_price)),
             bullish_candles=bullish,
             bearish_candles=bearish,
             unchanged_candles=unchanged,
@@ -132,7 +136,7 @@ class MultiTimeframeRegimeTracker:
         )
 
     def update(self, force: bool = False) -> Dict[str, RegimeSnapshot]:
-        now = __import__("time").time()
+        now = time.time()
         if not force and now - self.last_update_at < MARKET_REGIME_UPDATE_INTERVAL_SECONDS:
             return self.snapshots
         self.last_update_at = now
