@@ -34,6 +34,7 @@ RECENT_RETURNS_WINDOW = 10
 RISK_PER_TRADE_PCT = 0.01
 MAX_TOTAL_EXPOSURE_PCT = 0.30
 MIN_SIZE_FACTOR = 0.10
+DEFAULT_SIZE_FACTOR = 1.0
 MAX_POSITION_BALANCE_PCT = 0.98
 FEE_RESERVE_PCT = 0.02
 TAKER_FEE_PCT = 0.001
@@ -44,15 +45,12 @@ VOL_STOP_MULTIPLIER = 1.8
 # --------------------------------------------------
 # Profit management
 # --------------------------------------------------
-# Early protection starts from a meaningful profit rather than waiting for a
-# fixed 1% target. It uses the best tick-level PNL reached by the trade.
 EARLY_PROFIT_PROTECTION_ENABLED = True
 EARLY_PROFIT_PROTECTION_TRIGGER_PCT = 0.0020
 EARLY_PROFIT_MAX_GIVEBACK_PCT = 0.0025
 EARLY_PROFIT_FLOOR_PCT = 0.0
 EARLY_PROFIT_REQUIRE_NONNEGATIVE_PNL = True
 
-# Larger-profit protection is a trailing regime, not a fixed take-profit.
 PROFIT_PROTECTION_ENABLED = True
 PROFIT_PROTECTION_TRIGGER_PCT = 0.01
 TAKE_PROFIT_PCT = PROFIT_PROTECTION_TRIGGER_PCT
@@ -127,6 +125,7 @@ SIGNAL_ID_PREFIX = "SIG"
 SIGNAL_DECIMAL_PLACES = 12
 SIGNAL_STATE_DECIMAL_PLACES = 6
 DEFAULT_SIGNAL_STRENGTH = "MEDIUM"
+STRONG_SIGNAL_SCORE_MINIMUM = STRATEGY_STRONG_SCORE_THRESHOLD
 DEFAULT_RISK_LEVEL = "MEDIUM"
 
 # --------------------------------------------------
