@@ -1,8 +1,15 @@
-from config.settings import ALLOW_ENTRY_ON_FIRST_LIVE_CANDLE, DIAGNOSTIC_LOGGING
+from config.settings import (
+    ALLOW_ENTRY_ON_FIRST_LIVE_CANDLE,
+    DIAGNOSTIC_LOGGING,
+    LOG_DIRECTORY,
+    SIGNAL_LOG_FILENAME,
+    STRONG_SIGNAL_SCORE_MINIMUM,
+    DEFAULT_SIGNAL_STRENGTH,
+    DEFAULT_RISK_LEVEL,
+)
 from signals.signal_engine import SignalEngine
 from strategy.trend_volatility_strategy import SpotTrendPullbackStrategy
 from utils.signal_logger import SignalLogger, SignalRecord
-from config.settings import LOG_DIRECTORY
 from datetime import datetime, timezone
 
 
@@ -17,7 +24,7 @@ class TradingBot:
         self.current_candle_id = None
         self.live_candle_count = 0
         self.strategy = SpotTrendPullbackStrategy()
-        self.signal_logger = SignalLogger(LOG_DIRECTORY / "signals.csv")
+        self.signal_logger = SignalLogger(LOG_DIRECTORY / SIGNAL_LOG_FILENAME)
         self._last_logged_signal_state = {}
 
     def on_price_tick(self, symbol, price):
@@ -30,11 +37,7 @@ class TradingBot:
                 self.on_trade_closed()
 
     def on_in_trade_candle(self, symbol, candle):
-        """Process only a newly closed dedicated in-trade analysis candle.
-
-        This feed never evaluates entries. Its independent timeframe allows
-        reversals to be confirmed faster without weakening the entry setup.
-        """
+        """Process only a newly closed dedicated in-trade analysis candle."""
         self.in_trade_signal_engine.update(symbol, candle)
         if not self.executor.position:
             return
@@ -101,7 +104,7 @@ class TradingBot:
             source=self.strategy.name,
             price=float(report.get("price", 0.0)),
             confidence=float(report.get("confidence", 0.0)),
-            strength=("STRONG" if report.get("score", 0) >= 8 else "MEDIUM"),
+            strength=("STRONG" if report.get("score", 0) >= STRONG_SIGNAL_SCORE_MINIMUM else DEFAULT_SIGNAL_STRENGTH),
             action_taken=action_taken,
             indicators={
                 "ema_fast": report.get("ema_fast"),
@@ -128,7 +131,7 @@ class TradingBot:
                 "price_range_pct": report.get("price_range_pct"),
                 "candle_timestamp": report.get("candle_timestamp"),
             },
-            risk_level="MEDIUM",
+            risk_level=DEFAULT_RISK_LEVEL,
             recommendation=report.get("recommendation", report.get("signal", "")),
         )
         self.signal_logger.log_signal(record)
@@ -145,10 +148,8 @@ class TradingBot:
         self.live_candle_count += 1
 
         if self.executor.position:
-            # Entry-timeframe candles are never used to close a position.
             return
 
-        # First live candle establishes the post-warmup decision point only.
         if self.live_candle_count == 1 and not ALLOW_ENTRY_ON_FIRST_LIVE_CANDLE:
             report = self.strategy.explain({"symbol": symbol, "candles": candles, "analysis": analysis})
             self._print_decision_report(symbol, report, first_live=True)
@@ -162,7 +163,6 @@ class TradingBot:
         if signal_type not in {"BUY", "WAIT"}:
             return
 
-        # Log meaningful signal transitions for the full decision state.
         logged_signal_id = self._log_signal(symbol, signal_type, report)
 
         if signal_type != "BUY":
