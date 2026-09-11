@@ -15,8 +15,9 @@ class Position:
     open_tick_id: Optional[int] = None
     best_price: Optional[float] = None
     trail_active: bool = False
-    # Explicit exit-state fields.  Prices are evaluated on ticks, while
+    # Explicit exit-state fields. Prices are evaluated on ticks, while
     # reversal confirmation advances only on distinct closed candles.
+    early_profit_protection_active: bool = False
     profit_protection_active: bool = False
     peak_pnl_pct: float = 0.0
     protected_pnl_pct: float = 0.0
