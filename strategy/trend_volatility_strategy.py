@@ -8,7 +8,6 @@ from config.settings import (
     STRATEGY_EMA_FAST_PERIOD,
     STRATEGY_EMA_SLOW_PERIOD,
     STRATEGY_ENTRY_SCORE_REQUIRED,
-    STRATEGY_STRONG_SCORE_THRESHOLD,
     STRATEGY_MIN_CANDLES,
     STRATEGY_MIN_VOLUME_RATIO,
     STRATEGY_NEAR_PULLBACK_ATR_MULTIPLIER,
@@ -21,6 +20,7 @@ from config.settings import (
     STRATEGY_VOLUME_LOOKBACK_CANDLES,
     STRATEGY_NAME,
     STRATEGY_VERSION,
+    DEFAULT_SIZE_FACTOR,
 )
 
 
@@ -114,7 +114,7 @@ class SpotTrendPullbackStrategy(BaseStrategy):
             return None
         return Signal(
             SignalType.LONG,
-            size_factor=1.0,
+            size_factor=DEFAULT_SIZE_FACTOR,
             price=report["price"],
             reason=(
                 f"trend-pullback score={report['score']}/{len(report.get('checks', {}))} "
