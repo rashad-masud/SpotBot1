@@ -10,6 +10,7 @@ from trading.ccxtpapertradeexecutor import CCXTPaperTradeExecutor
 from data_provider.ccxtdatafeed import CCXTDataFeed
 from trading.tradingbot import TradingBot
 from data.warmup import warmup_engine, warmup_in_trade_engine
+from analysis.multi_timeframe_regime import MultiTimeframeRegimeTracker
 from config.settings import (
     HISTORICAL_CANDLE_TIMEFRAME, ENTRY_SIGNAL_TIMEFRAME,
     IN_TRADE_ANALYSIS_TIMEFRAME,
@@ -133,6 +134,8 @@ def run_for_symbol(exchange, symbol, pair):
         return None
 
     bot = TradingBot(engine, manager, executor, on_trade_closed=on_trade_closed)
+    regime_tracker = MultiTimeframeRegimeTracker(exchange, pair)
+
     if HISTORICAL_CANDLE_TIMEFRAME != ENTRY_SIGNAL_TIMEFRAME:
         raise ValueError(
             "HISTORICAL_CANDLE_TIMEFRAME must equal TIMEFRAME in this version. "
@@ -142,11 +145,13 @@ def run_for_symbol(exchange, symbol, pair):
 
     warmup_engine(exchange, bot, symbol, pair)
     warmup_in_trade_engine(exchange, bot, symbol, pair)
+    bot.on_market_regime_update(regime_tracker.update(force=True))
 
     feed = CCXTDataFeed(
         exchange, pair, ENTRY_SIGNAL_TIMEFRAME, bot.on_candle, bot.on_price_tick,
         stop_flag=stop_flag, analysis_timeframe=IN_TRADE_ANALYSIS_TIMEFRAME,
         on_in_trade_candle=bot.on_in_trade_candle,
+        on_regime_update=lambda _symbol: bot.on_market_regime_update(regime_tracker.update()),
     )
     print(f"[BOT] Running {'PAPER' if PAPER_TRADE else 'LIVE SPOT'} on {pair}")
     feed.start()
