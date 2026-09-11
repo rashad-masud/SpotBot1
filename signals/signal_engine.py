@@ -8,6 +8,8 @@ from config.settings import (
     MIN_TREND_PCT,
     TREND_STRENGTH_MIN,
     EXTREME_VOLATILITY_THRESHOLD,
+    SIGNAL_ENGINE_WINDOW_SIZE,
+    NUMERIC_EPSILON,
 )
 from core.model import MarketAnalysis
 from core.enums import MarketRegime
@@ -16,8 +18,8 @@ from core.enums import MarketRegime
 class SignalEngine:
     """Lightweight regime engine used by both live and paper trading."""
 
-    def __init__(self, window_size: int = 300):
-        self.window_size = window_size
+    def __init__(self, window_size: Optional[int] = None):
+        self.window_size = window_size if window_size is not None else SIGNAL_ENGINE_WINDOW_SIZE
         self.candles = {}
         self.market_analysis = {}
         self._last_regime = {}
@@ -37,10 +39,13 @@ class SignalEngine:
         candles = list(self.candles[symbol])
         window = candles[-REGIME_LOOKBACK_CANDLES:]
         closes = [float(c["close"]) for c in window]
-        trend_pct = (closes[-1] - closes[0]) / closes[0]
-        returns = [abs((closes[i] - closes[i - 1]) / closes[i - 1]) for i in range(1, len(closes))]
+        trend_pct = (closes[-1] - closes[0]) / max(closes[0], NUMERIC_EPSILON)
+        returns = [
+            abs((closes[i] - closes[i - 1]) / max(closes[i - 1], NUMERIC_EPSILON))
+            for i in range(1, len(closes))
+        ]
         volatility = statistics.mean(returns) if returns else 0.0
-        trend_strength = abs(trend_pct) / max(volatility, 1e-9)
+        trend_strength = abs(trend_pct) / max(volatility, NUMERIC_EPSILON)
 
         if volatility >= MAX_VOLATILITY_TO_AVOID:
             regime = MarketRegime.VOLATILE
@@ -67,10 +72,10 @@ class SignalEngine:
             trend_strength=trend_strength,
             volatility_pct=volatility,
             price_change_pct=trend_pct,
-            price_range_pct=(max(c["high"] for c in window) - min(c["low"] for c in window)) / closes[0],
+            price_range_pct=(max(c["high"] for c in window) - min(c["low"] for c in window)) / max(closes[0], NUMERIC_EPSILON),
             is_high_volatility=volatility >= EXTREME_VOLATILITY_THRESHOLD,
             should_trade=value != MarketRegime.VOLATILE.value,
             trade_reason=value,
-            confidence=min(trend_strength / max(TREND_STRENGTH_MIN, 1e-9), 1.0),
+            confidence=min(trend_strength / max(TREND_STRENGTH_MIN, NUMERIC_EPSILON), 1.0),
             trend_age=self._trend_age[symbol],
         )
