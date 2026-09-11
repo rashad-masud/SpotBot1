@@ -44,16 +44,15 @@ VOL_STOP_MULTIPLIER = 1.8
 # --------------------------------------------------
 # Profit management
 # --------------------------------------------------
-# A trade does not need to reach +1% before profit protection starts.
-# Activation is based on the best tick-level PNL reached by the trade.
+# Early protection starts from a meaningful profit rather than waiting for a
+# fixed 1% target. It uses the best tick-level PNL reached by the trade.
 EARLY_PROFIT_PROTECTION_ENABLED = True
-EARLY_PROFIT_PROTECTION_TRIGGER_PCT = 0.0020  # +0.20%
-EARLY_PROFIT_MAX_GIVEBACK_PCT = 0.0025        # 0.25 percentage points
-EARLY_PROFIT_FLOOR_PCT = 0.0                  # do not allow a protected trade to become a loser
+EARLY_PROFIT_PROTECTION_TRIGGER_PCT = 0.0020
+EARLY_PROFIT_MAX_GIVEBACK_PCT = 0.0025
+EARLY_PROFIT_FLOOR_PCT = 0.0
 EARLY_PROFIT_REQUIRE_NONNEGATIVE_PNL = True
 
-# Stronger profit protection for larger moves. This is a trailing regime,
-# not a fixed take-profit target, so bull runs can continue.
+# Larger-profit protection is a trailing regime, not a fixed take-profit.
 PROFIT_PROTECTION_ENABLED = True
 PROFIT_PROTECTION_TRIGGER_PCT = 0.01
 TAKE_PROFIT_PCT = PROFIT_PROTECTION_TRIGGER_PCT
@@ -72,7 +71,9 @@ REVERSAL_CONFIRM_CANDLES = 3
 REVERSAL_SCORE_REQUIRED = 4
 REVERSAL_VOLUME_SPIKE = 1.20
 REVERSAL_VOLUME_LOOKBACK_CANDLES = 20
+REVERSAL_VOLATILITY_LOOKBACK_CANDLES = 14
 REVERSAL_SHORT_TERM_CANDLES = 3
+REVERSAL_LOWER_HIGH_CANDLES = 3
 REVERSAL_RSI_FALLING_MAX = 60.0
 
 # --------------------------------------------------
@@ -129,7 +130,7 @@ DEFAULT_SIGNAL_STRENGTH = "MEDIUM"
 DEFAULT_RISK_LEVEL = "MEDIUM"
 
 # --------------------------------------------------
-# Internal numerical safeguards
+# Numerical safeguards / calculation defaults
 # --------------------------------------------------
 NUMERIC_EPSILON = 1e-9
 DEFAULT_RSI_VALUE = 50.0
@@ -140,12 +141,10 @@ DEFAULT_RELATIVE_VOLUME = 1.0
 # --------------------------------------------------
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
-
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "")
 ENABLE_EMAIL = False
-
 BINANCE_TESTNET = False
