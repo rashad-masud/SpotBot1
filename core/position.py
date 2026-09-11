@@ -10,6 +10,7 @@ class Position:
     size: float
     stop_pct: float
     opened_at: float
+    signal_id: Optional[str] = None
     open_candle_id: Optional[int] = None
     open_tick_id: Optional[int] = None
     best_price: Optional[float] = None
