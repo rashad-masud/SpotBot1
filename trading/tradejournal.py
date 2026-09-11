@@ -13,7 +13,7 @@ class TradeJournal:
     """
 
     HEADER = [
-        "timestamp", "trade_id", "symbol", "side", "regime", "entry_price",
+        "timestamp", "trade_id", "signal_id", "symbol", "side", "regime", "entry_price",
         "exit_price", "size", "leverage", "stop_pct", "pnl", "balance_after",
         "reason", "open_candle_id", "close_candle_id", "open_tick_id", "close_tick_id",
     ]
@@ -37,6 +37,7 @@ class TradeJournal:
     def _signature(row):
         return (
             str(row.get("trade_id", "")),
+            str(row.get("signal_id", "")),
             str(row.get("symbol", "")),
             str(row.get("entry_price", "")),
             str(row.get("exit_price", "")),
@@ -50,7 +51,8 @@ class TradeJournal:
         max_id = 0
         try:
             with open(self.file_path, "r", newline="") as f:
-                for row in csv.DictReader(f):
+                reader = csv.DictReader(f)
+                for row in reader:
                     signature = self._signature(row)
                     if row.get("trade_id") and row.get("exit_price") not in (None, ""):
                         self._closed_signatures.add(signature)
@@ -68,12 +70,12 @@ class TradeJournal:
         return trade_id
 
     def record_open(self, symbol, side, regime, entry_price, size, leverage, stop_pct,
-                    *, trade_id=None, open_candle_id=None, open_tick_id=None):
+                    *, trade_id=None, signal_id=None, open_candle_id=None, open_tick_id=None):
         if trade_id is None:
             trade_id = self.next_trade_id()
         self._last_open = {
-            "timestamp": int(time.time()), "trade_id": trade_id, "symbol": symbol,
-            "side": side, "regime": regime, "entry_price": entry_price, "size": size,
+            "timestamp": int(time.time()), "trade_id": trade_id, "signal_id": signal_id or "",
+            "symbol": symbol, "side": side, "regime": regime, "entry_price": entry_price, "size": size,
             "leverage": leverage, "stop_pct": stop_pct,
             "open_candle_id": open_candle_id, "open_tick_id": open_tick_id,
         }
@@ -81,18 +83,19 @@ class TradeJournal:
         # and the journal does not depend on a later close event.
         with open(self.file_path, "a", newline="") as f:
             csv.writer(f).writerow([
-                self._last_open["timestamp"], trade_id, symbol, side, regime,
+                self._last_open["timestamp"], trade_id, self._last_open["signal_id"], symbol, side, regime,
                 entry_price, "", size, leverage, stop_pct, "", "", "open",
                 open_candle_id or "", "", open_tick_id or "", "",
             ])
         return trade_id
 
-    def record_close(self, *, trade_id=None, side=None, entry_price=None, exit_price=None,
+    def record_close(self, *, trade_id=None, signal_id=None, side=None, entry_price=None, exit_price=None,
                      pnl=None, balance_after=None, reason=None, open_candle_id=None,
                      close_candle_id=None, open_tick_id=None, close_tick_id=None):
         data = self._last_open if self._last_open and self._last_open.get("trade_id") == trade_id else {}
         row_data = {
             "trade_id": trade_id,
+            "signal_id": signal_id if signal_id is not None else data.get("signal_id", ""),
             "symbol": data.get("symbol", ""),
             "entry_price": entry_price if entry_price is not None else data.get("entry_price", ""),
             "exit_price": exit_price if exit_price is not None else "",
@@ -106,8 +109,8 @@ class TradeJournal:
             return False
 
         row = [
-            int(time.time()), trade_id, data.get("symbol", ""), side or data.get("side", ""),
-            data.get("regime", ""), row_data["entry_price"], row_data["exit_price"],
+            int(time.time()), trade_id, row_data["signal_id"], data.get("symbol", ""),
+            side or data.get("side", ""), data.get("regime", ""), row_data["entry_price"], row_data["exit_price"],
             data.get("size", ""), data.get("leverage", ""), data.get("stop_pct", ""),
             pnl if pnl is not None else 0, balance_after if balance_after is not None else 0,
             row_data["reason"], row_data["open_candle_id"], row_data["close_candle_id"],
