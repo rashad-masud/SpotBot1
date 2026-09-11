@@ -47,18 +47,29 @@ DEFAULT_SIZE_FACTOR = 1.0
 MAX_POSITION_BALANCE_PCT = 0.98
 FEE_RESERVE_PCT = 0.02
 TAKER_FEE_PCT = 0.001
-MIN_STOP_PCT = 0.009
-MAX_STOP_PCT = 0.05
-VOL_STOP_MULTIPLIER = 1.8
+
+# Initial stop is volatility-aware, but deliberately bounded so a single
+# trade cannot remain open through an unnecessarily large adverse move.
+# The lower bound prevents normal 1m/5m noise from causing constant stops;
+# the upper bound caps the downside when volatility expands.
+MIN_STOP_PCT = 0.004
+MAX_STOP_PCT = 0.015
+VOL_STOP_MULTIPLIER = 1.5
 
 # --------------------------------------------------
 # Profit management
 # --------------------------------------------------
+# Do not take very small profits simply because price briefly moved in our
+# favour. Early protection only starts after a meaningful move and allows a
+# larger pullback before closing.
 EARLY_PROFIT_PROTECTION_ENABLED = True
-EARLY_PROFIT_PROTECTION_TRIGGER_PCT = 0.0020
-EARLY_PROFIT_MAX_GIVEBACK_PCT = 0.0025
+EARLY_PROFIT_PROTECTION_TRIGGER_PCT = 0.0050
+EARLY_PROFIT_MAX_GIVEBACK_PCT = 0.0035
 EARLY_PROFIT_FLOOR_PCT = 0.0
 EARLY_PROFIT_REQUIRE_NONNEGATIVE_PNL = True
+
+# Once the trade has reached +1%, switch to progressive trailing protection
+# rather than using a fixed take-profit target. This lets strong trends run.
 PROFIT_PROTECTION_ENABLED = True
 PROFIT_PROTECTION_TRIGGER_PCT = 0.01
 TAKE_PROFIT_PCT = PROFIT_PROTECTION_TRIGGER_PCT
@@ -66,7 +77,7 @@ TRAIL_TRIGGER_PNL = PROFIT_PROTECTION_TRIGGER_PCT
 TRAIL_DISTANCE_PCT = 0.007
 PROFIT_TRAIL_ATR_MULTIPLIER = 1.0
 PROFIT_FLOOR_PCT = 0.002
-MAX_PROFIT_GIVEBACK_PCT = 0.004
+MAX_PROFIT_GIVEBACK_PCT = 0.006
 
 # --------------------------------------------------
 # In-trade reversal protection
@@ -99,7 +110,7 @@ REGIME_MIN_CANDLES = REGIME_LOOKBACK_CANDLES
 # Entry strategy
 # --------------------------------------------------
 STRATEGY_NAME = "SpotTrendPullbackStrategy"
-STRATEGY_VERSION = "1.5"
+STRATEGY_VERSION = "1.6"
 STRATEGY_MIN_CANDLES = 60
 STRATEGY_EMA_FAST_PERIOD = 20
 STRATEGY_EMA_SLOW_PERIOD = 50
