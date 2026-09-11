@@ -1,6 +1,9 @@
 from config.settings import ALLOW_ENTRY_ON_FIRST_LIVE_CANDLE, DIAGNOSTIC_LOGGING
 from signals.signal_engine import SignalEngine
 from strategy.trend_volatility_strategy import SpotTrendPullbackStrategy
+from utils.signal_logger import SignalLogger, SignalRecord
+from config.settings import LOG_DIRECTORY
+from datetime import datetime, timezone
 
 
 class TradingBot:
@@ -14,6 +17,7 @@ class TradingBot:
         self.current_candle_id = None
         self.live_candle_count = 0
         self.strategy = SpotTrendPullbackStrategy()
+        self.signal_logger = SignalLogger(LOG_DIRECTORY / "signals.csv")
 
     def on_price_tick(self, symbol, price):
         self.tick_id += 1
@@ -66,6 +70,42 @@ class TradingBot:
             print("  " + " ".join(f"{name}={'OK' if ok else 'NO'}" for name, ok in checks.items()))
         print(f"  DECISION={report.get('signal')} | {report.get('reason')}")
 
+    def _log_signal(self, symbol, signal, report, action_taken="NONE", notes=""):
+        """Assign a stable ID, then persist the complete generated signal."""
+        if not signal.signal_id:
+            signal.signal_id = self.signal_logger.generate_signal_id(symbol)
+
+        record = SignalRecord(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            signal_id=signal.signal_id,
+            pair=symbol,
+            signal_type=signal.signal_type.value,
+            source=self.strategy.name,
+            price=float(signal.price or report.get("price") or 0.0),
+            confidence=float(report.get("confidence", 0.0)),
+            strength=("STRONG" if report.get("score", 0) >= 8 else "MEDIUM"),
+            action_taken=action_taken,
+            strategy_metadata={
+                "strategy": self.strategy.name,
+                "strategy_version": self.strategy.version,
+                "score": report.get("score"),
+                "score_required": report.get("score_required"),
+                "checks": report.get("checks", {}),
+            },
+            market_context={
+                "trend": report.get("trend"),
+                "trend_strength": report.get("trend_strength"),
+                "trend_age": report.get("trend_age"),
+                "volatility_pct": report.get("volatility_pct"),
+                "price_change_pct": report.get("price_change_pct"),
+                "price_range_pct": report.get("price_range_pct"),
+            },
+            recommendation=report.get("signal", ""),
+            notes=notes or report.get("reason", ""),
+        )
+        self.signal_logger.log_signal(record)
+        return signal
+
     def on_candle(self, symbol, candle):
         self.current_candle_id = candle["timestamp"]
         self.signal_engine.update(symbol, candle)
@@ -93,9 +133,15 @@ class TradingBot:
 
         signal = self.strategy_manager.evaluate(symbol, candles, analysis)
         if signal:
-            print(f"[ENTRY] BUY {symbol} @ {candle['close']} | {signal.reason}")
-            self.executor.execute(
+            signal = self._log_signal(symbol, signal, report, action_taken="NONE")
+            print(f"[ENTRY SIGNAL] {signal.signal_id} BUY {symbol} @ {candle['close']} | {signal.reason}")
+            opened = self.executor.execute(
                 symbol, signal, candle["close"], analysis.gen_trend,
                 analysis.volatility_pct, size_factor=signal.size_factor,
                 candleid=self.current_candle_id, tickid=self.tick_id
+            )
+            self.signal_logger.update_signal_action(
+                signal.signal_id,
+                "OPENED" if opened else "IGNORED",
+                "trade opened" if opened else "entry execution rejected",
             )
