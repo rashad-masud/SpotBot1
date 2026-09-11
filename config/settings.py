@@ -18,6 +18,13 @@ HISTORICAL_CANDLE_ANALYSIS = "24h"
 HISTORICAL_CANDLE_TIMEFRAME = ENTRY_SIGNAL_TIMEFRAME
 ALLOW_ENTRY_ON_FIRST_LIVE_CANDLE = False
 
+# Multi-timeframe market structure observation
+MARKET_REGIME_TIMEFRAMES = ("1m", "5m", "15m", "30m", "1h")
+MARKET_REGIME_CANDLE_COUNT = 10
+MARKET_REGIME_UPDATE_INTERVAL_SECONDS = 60
+MARKET_REGIME_LOG_FILENAME = "market_regimes.txt"
+MARKET_REGIME_DECIMAL_PLACES = 6
+
 # --------------------------------------------------
 # Runtime / diagnostics
 # --------------------------------------------------
