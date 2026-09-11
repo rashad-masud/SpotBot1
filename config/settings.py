@@ -12,6 +12,7 @@ from pathlib import Path
 ENTRY_SIGNAL_TIMEFRAME = "5m"
 IN_TRADE_ANALYSIS_TIMEFRAME = "1m"
 IN_TRADE_ANALYSIS_WARMUP_CANDLES = 60
+SIGNAL_ENGINE_WINDOW_SIZE = 300
 TIMEFRAME = ENTRY_SIGNAL_TIMEFRAME
 HISTORICAL_CANDLE_ANALYSIS = "24h"
 HISTORICAL_CANDLE_TIMEFRAME = ENTRY_SIGNAL_TIMEFRAME
@@ -25,28 +26,35 @@ PAPER_TRADE = True
 STARTING_CAPITAL = 1000.0
 INTRA_CANDLE_SECONDS = 5
 SCAN_INTERVAL_SECONDS = 60
+RECENT_RETURNS_WINDOW = 10
 
 # --------------------------------------------------
-# Risk
+# Risk / position sizing
 # --------------------------------------------------
 RISK_PER_TRADE_PCT = 0.01
 MAX_TOTAL_EXPOSURE_PCT = 0.30
+MIN_SIZE_FACTOR = 0.10
+MAX_POSITION_BALANCE_PCT = 0.98
+FEE_RESERVE_PCT = 0.02
 TAKER_FEE_PCT = 0.001
 MIN_STOP_PCT = 0.009
 MAX_STOP_PCT = 0.05
 VOL_STOP_MULTIPLIER = 1.8
 
-# Profit protection
-# Early protection is based on the best tick-level PNL reached by the trade.
-# It is intentionally separate from the larger-profit trailing protection:
-# a trade does not need to reach +1% before we protect a meaningful gain.
+# --------------------------------------------------
+# Profit management
+# --------------------------------------------------
+# A trade does not need to reach +1% before profit protection starts.
+# Activation is based on the best tick-level PNL reached by the trade.
+EARLY_PROFIT_PROTECTION_ENABLED = True
 EARLY_PROFIT_PROTECTION_TRIGGER_PCT = 0.0020  # +0.20%
 EARLY_PROFIT_MAX_GIVEBACK_PCT = 0.0025        # 0.25 percentage points
-EARLY_PROFIT_FLOOR_PCT = 0.0                  # Do not allow protected trades to become losers
+EARLY_PROFIT_FLOOR_PCT = 0.0                  # do not allow a protected trade to become a loser
+EARLY_PROFIT_REQUIRE_NONNEGATIVE_PNL = True
 
-# Full profit protection for stronger moves. Reaching this level tightens
-# protection further and lets profitable bull runs continue rather than taking
-# an automatic fixed target.
+# Stronger profit protection for larger moves. This is a trailing regime,
+# not a fixed take-profit target, so bull runs can continue.
+PROFIT_PROTECTION_ENABLED = True
 PROFIT_PROTECTION_TRIGGER_PCT = 0.01
 TAKE_PROFIT_PCT = PROFIT_PROTECTION_TRIGGER_PCT
 TRAIL_TRIGGER_PNL = PROFIT_PROTECTION_TRIGGER_PCT
@@ -55,13 +63,20 @@ PROFIT_TRAIL_ATR_MULTIPLIER = 1.0
 PROFIT_FLOOR_PCT = 0.002
 MAX_PROFIT_GIVEBACK_PCT = 0.004
 
-# Reversal protection
+# --------------------------------------------------
+# In-trade reversal protection
+# --------------------------------------------------
+REVERSAL_ENABLED = True
+REVERSAL_MIN_CANDLES = 21
 REVERSAL_CONFIRM_CANDLES = 3
 REVERSAL_SCORE_REQUIRED = 4
 REVERSAL_VOLUME_SPIKE = 1.20
+REVERSAL_VOLUME_LOOKBACK_CANDLES = 20
+REVERSAL_SHORT_TERM_CANDLES = 3
+REVERSAL_RSI_FALLING_MAX = 60.0
 
 # --------------------------------------------------
-# Regime / strategy
+# Regime / market analysis
 # --------------------------------------------------
 REGIME_LOOKBACK_CANDLES = 72
 MIN_TREND_PCT = 0.02
@@ -69,11 +84,13 @@ TREND_STRENGTH_MIN = 2.0
 MAX_VOLATILITY_TO_AVOID = 0.055
 EXTREME_VOLATILITY_THRESHOLD = 0.035
 MIN_TREND_AGE_TO_TRADE = 3
+REGIME_MIN_CANDLES = REGIME_LOOKBACK_CANDLES
 
-# Spot trend-pullback strategy. These are normal configuration values,
-# intentionally not environment variables, so the strategy is controlled
-# from one visible settings module. Deployments can maintain different
-# settings.py files/config profiles per agent/token.
+# --------------------------------------------------
+# Entry strategy
+# --------------------------------------------------
+STRATEGY_NAME = "SpotTrendPullbackStrategy"
+STRATEGY_VERSION = "1.5"
 STRATEGY_MIN_CANDLES = 60
 STRATEGY_EMA_FAST_PERIOD = 20
 STRATEGY_EMA_SLOW_PERIOD = 50
@@ -88,6 +105,7 @@ STRATEGY_RSI_MAX = 70.0
 STRATEGY_VOLUME_LOOKBACK_CANDLES = 20
 STRATEGY_MIN_VOLUME_RATIO = 0.9
 STRATEGY_ENTRY_SCORE_REQUIRED = 7
+STRATEGY_STRONG_SCORE_THRESHOLD = 8
 STRATEGY_SUPPORTED_REGIMES = {"trend_up", "breakout"}
 
 # --------------------------------------------------
@@ -99,12 +117,23 @@ MIN_VOLUME_USDT = 1_000_000
 LARGE_CAP_BLACKLIST = {"BTC", "ETH", "SOL", "XRP", "BNB"}
 
 # --------------------------------------------------
-# Logging
+# Logging / formatting
 # --------------------------------------------------
-# Keep this as a Path because the logging/signal code uses the / operator
-# to construct files (for example: LOG_DIRECTORY / "signals.csv").
 LOG_DIRECTORY = Path("logs")
 TRADE_LOG_FILENAME = "trades.csv"
+SIGNAL_LOG_FILENAME = "signals.csv"
+SIGNAL_ID_PREFIX = "SIG"
+SIGNAL_DECIMAL_PLACES = 12
+SIGNAL_STATE_DECIMAL_PLACES = 6
+DEFAULT_SIGNAL_STRENGTH = "MEDIUM"
+DEFAULT_RISK_LEVEL = "MEDIUM"
+
+# --------------------------------------------------
+# Internal numerical safeguards
+# --------------------------------------------------
+NUMERIC_EPSILON = 1e-9
+DEFAULT_RSI_VALUE = 50.0
+DEFAULT_RELATIVE_VOLUME = 1.0
 
 # --------------------------------------------------
 # Secrets / externally supplied credentials only
