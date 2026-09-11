@@ -6,6 +6,8 @@ from config.settings import (
     STRONG_SIGNAL_SCORE_MINIMUM,
     DEFAULT_SIGNAL_STRENGTH,
     DEFAULT_RISK_LEVEL,
+    SIGNAL_DECIMAL_PLACES,
+    SIGNAL_STATE_DECIMAL_PLACES,
 )
 from signals.signal_engine import SignalEngine
 from strategy.trend_volatility_strategy import SpotTrendPullbackStrategy
@@ -26,6 +28,23 @@ class TradingBot:
         self.strategy = SpotTrendPullbackStrategy()
         self.signal_logger = SignalLogger(LOG_DIRECTORY / SIGNAL_LOG_FILENAME)
         self._last_logged_signal_state = {}
+        self.market_regime_snapshots = {}
+
+    def on_market_regime_update(self, snapshots):
+        """Receive the latest multi-timeframe market-structure snapshot."""
+        self.market_regime_snapshots = snapshots or {}
+        if not DIAGNOSTIC_LOGGING:
+            return
+        summary = []
+        for timeframe, snapshot in self.market_regime_snapshots.items():
+            summary.append(
+                f"{timeframe}: {snapshot.regime} "
+                f"range={snapshot.range_pct:.2%} "
+                f"pos={snapshot.position_in_range_pct:.0%} "
+                f"H={snapshot.high:.8f} L={snapshot.low:.8f}"
+            )
+        if summary:
+            print("[REGIME] " + " | ".join(summary))
 
     def on_price_tick(self, symbol, price):
         self.tick_id += 1
@@ -78,13 +97,13 @@ class TradingBot:
         """Log a meaningful signal transition with a complete market snapshot."""
         signal_state = (
             signal_type,
-            round(float(report.get("price", 0.0)), 12),
-            round(float(report.get("confidence", 0.0)), 6),
-            round(float(report.get("ema20", 0.0)), 12),
-            round(float(report.get("ema50", 0.0)), 12),
-            round(float(report.get("rsi", 0.0)), 6),
-            round(float(report.get("atr", 0.0)), 12),
-            round(float(report.get("volume_ratio", 0.0)), 6),
+            round(float(report.get("price", 0.0)), SIGNAL_DECIMAL_PLACES),
+            round(float(report.get("confidence", 0.0)), SIGNAL_STATE_DECIMAL_PLACES),
+            round(float(report.get("ema20", 0.0)), SIGNAL_DECIMAL_PLACES),
+            round(float(report.get("ema50", 0.0)), SIGNAL_DECIMAL_PLACES),
+            round(float(report.get("rsi", 0.0)), SIGNAL_STATE_DECIMAL_PLACES),
+            round(float(report.get("atr", 0.0)), SIGNAL_DECIMAL_PLACES),
+            round(float(report.get("volume_ratio", 0.0)), SIGNAL_STATE_DECIMAL_PLACES),
             report.get("trend"),
             report.get("trend_age"),
             report.get("score"),
@@ -130,6 +149,10 @@ class TradingBot:
                 "price_change_pct": report.get("price_change_pct"),
                 "price_range_pct": report.get("price_range_pct"),
                 "candle_timestamp": report.get("candle_timestamp"),
+                "multi_timeframe_regime": {
+                    timeframe: snapshot.to_dict()
+                    for timeframe, snapshot in self.market_regime_snapshots.items()
+                },
             },
             risk_level=DEFAULT_RISK_LEVEL,
             recommendation=report.get("recommendation", report.get("signal", "")),
