@@ -4,6 +4,7 @@ Non-secret strategy/runtime parameters are defined here. Secrets are read
 from environment variables so they are never committed to source control.
 """
 import os
+from pathlib import Path
 
 # --------------------------------------------------
 # Market data / historical analysis
@@ -90,7 +91,9 @@ LARGE_CAP_BLACKLIST = {"BTC", "ETH", "SOL", "XRP", "BNB"}
 # --------------------------------------------------
 # Logging
 # --------------------------------------------------
-LOG_DIRECTORY = "logs"
+# Keep this as a Path because the logging/signal code uses the / operator
+# to construct files (for example: LOG_DIRECTORY / "signals.csv").
+LOG_DIRECTORY = Path("logs")
 TRADE_LOG_FILENAME = "trades.csv"
 
 # --------------------------------------------------
