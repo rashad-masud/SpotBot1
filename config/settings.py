@@ -37,6 +37,16 @@ MAX_STOP_PCT = 0.05
 VOL_STOP_MULTIPLIER = 1.8
 
 # Profit protection
+# Early protection is based on the best tick-level PNL reached by the trade.
+# It is intentionally separate from the larger-profit trailing protection:
+# a trade does not need to reach +1% before we protect a meaningful gain.
+EARLY_PROFIT_PROTECTION_TRIGGER_PCT = 0.0020  # +0.20%
+EARLY_PROFIT_MAX_GIVEBACK_PCT = 0.0025        # 0.25 percentage points
+EARLY_PROFIT_FLOOR_PCT = 0.0                  # Do not allow protected trades to become losers
+
+# Full profit protection for stronger moves. Reaching this level tightens
+# protection further and lets profitable bull runs continue rather than taking
+# an automatic fixed target.
 PROFIT_PROTECTION_TRIGGER_PCT = 0.01
 TAKE_PROFIT_PCT = PROFIT_PROTECTION_TRIGGER_PCT
 TRAIL_TRIGGER_PNL = PROFIT_PROTECTION_TRIGGER_PCT
@@ -99,12 +109,9 @@ TRADE_LOG_FILENAME = "trades.csv"
 # --------------------------------------------------
 # Secrets / externally supplied credentials only
 # --------------------------------------------------
-# Exchange credentials remain environment variables.
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
 
-# SMTP credentials remain environment variables. Server/port are non-secret
-# configuration and therefore belong here.
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
@@ -112,5 +119,4 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "")
 ENABLE_EMAIL = False
 
-# Binance testnet is a deployment choice, not a secret.
 BINANCE_TESTNET = False
