@@ -45,6 +45,19 @@ class ProfitManagementTests(unittest.TestCase):
         self.assertFalse(self.executor.manage_position(price, tick_id=1))
         self.assertTrue(self.executor.position.profit_protection_active)
 
+    def test_meaningful_profit_does_not_need_one_percent_before_protection(self):
+        self.assertFalse(self.executor.manage_position(100.20, tick_id=1))
+        self.assertTrue(self.executor.position.early_profit_protection_active)
+        self.assertFalse(self.executor.position.profit_protection_active)
+
+    def test_small_profit_followed_by_loss_exits_immediately(self):
+        # Reproduce the observed failure: +0.23% was reached and later price
+        # fell to -0.44%. Tick-level early protection must close the trade.
+        self.assertFalse(self.executor.manage_position(100.23, tick_id=1))
+        self.assertTrue(self.executor.position.early_profit_protection_active)
+        self.assertTrue(self.executor.manage_position(99.56, tick_id=2))
+        self.assertIsNone(self.executor.position)
+
     def test_one_percent_activates_without_immediate_sale(self):
         self.activate_protection()
         self.assertIsNotNone(self.executor.position)
@@ -60,13 +73,11 @@ class ProfitManagementTests(unittest.TestCase):
 
     def test_confirmed_reversal_exits_after_required_closed_candles(self):
         self.activate_protection()
-        # Keep the protection safety thresholds out of this test so it verifies
-        # the candle-confirmation state machine itself.
         self.executor.position.peak_pnl_pct = 0.065
         reversal = {
             "score": REVERSAL_SCORE_REQUIRED,
             "active_signals": ["bearish_candle", "rsi_falling", "lower_high_structure"],
-            "ema20": 105.0, "ema50": 103.0, "ema20_slope": -0.001,
+            "ema20": 105.0, "ema50": 103.0, "ema_fast_slope": -0.001,
             "rsi": 48.0, "rsi_change": -4.0, "atr": 1.0, "volatility": 0.01,
             "relative_volume": 1.3, "trend_strength": 1.0,
         }
@@ -131,7 +142,7 @@ class ProfitManagementTests(unittest.TestCase):
         analysis = self.executor._reversal_analysis(candles, market_analysis=None)
         self.assertGreaterEqual(analysis["score"], 3)
         self.assertIn("bearish_candle", analysis["active_signals"])
-        self.assertIn("close_below_ema20", analysis["active_signals"])
+        self.assertIn("close_below_ema", analysis["active_signals"])
 
 
 if __name__ == "__main__":
