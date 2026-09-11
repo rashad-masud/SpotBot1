@@ -8,6 +8,7 @@ from config.settings import (
     STRATEGY_EMA_FAST_PERIOD,
     STRATEGY_EMA_SLOW_PERIOD,
     STRATEGY_ENTRY_SCORE_REQUIRED,
+    STRATEGY_STRONG_SCORE_THRESHOLD,
     STRATEGY_MIN_CANDLES,
     STRATEGY_MIN_VOLUME_RATIO,
     STRATEGY_NEAR_PULLBACK_ATR_MULTIPLIER,
@@ -18,22 +19,18 @@ from config.settings import (
     STRATEGY_RSI_PERIOD,
     STRATEGY_SUPPORTED_REGIMES,
     STRATEGY_VOLUME_LOOKBACK_CANDLES,
+    STRATEGY_NAME,
+    STRATEGY_VERSION,
 )
 
 
 class SpotTrendPullbackStrategy(BaseStrategy):
-    """Spot trend/pullback strategy driven entirely by config settings.
-
-    Historical candles are context only. A BUY is generated from a newly
-    closed live candle after the configured historical warm-up has completed.
-    Regime and market tradeability remain hard gates; the entry checklist uses
-    a configurable score threshold.
-    """
+    """Spot trend/pullback strategy driven entirely by config settings."""
 
     supported_regimes = STRATEGY_SUPPORTED_REGIMES
 
     def __init__(self):
-        super().__init__(name="SpotTrendPullbackStrategy", version="1.4")
+        super().__init__(name=STRATEGY_NAME, version=STRATEGY_VERSION)
 
     def explain(self, ctx):
         candles = ctx.get("candles", [])
@@ -76,7 +73,7 @@ class SpotTrendPullbackStrategy(BaseStrategy):
         failed = [name for name, ok in checks.items() if not ok]
         passed = [name for name, ok in checks.items() if ok]
         reason = (
-            f"score={score}/9 required={STRATEGY_ENTRY_SCORE_REQUIRED}; "
+            f"score={score}/{len(checks)} required={STRATEGY_ENTRY_SCORE_REQUIRED}; "
             f"passed={','.join(passed)}; "
             f"failed={','.join(failed) if failed else 'none'}"
         )
@@ -120,7 +117,7 @@ class SpotTrendPullbackStrategy(BaseStrategy):
             size_factor=1.0,
             price=report["price"],
             reason=(
-                f"trend-pullback score={report['score']}/9 "
+                f"trend-pullback score={report['score']}/{len(report.get('checks', {}))} "
                 f"EMA{STRATEGY_EMA_FAST_PERIOD}/{STRATEGY_EMA_SLOW_PERIOD} "
                 f"RSI={report['rsi']:.1f} vol={report['volume_ratio']:.2f}"
             ),
