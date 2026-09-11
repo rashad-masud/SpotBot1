@@ -75,13 +75,7 @@ class CCXTDataFeed:
             if self.on_regime_update and now - self.last_regime_update_time >= self.regime_update_interval:
                 self.last_regime_update_time = now
                 try:
-                    snapshots = self.on_regime_update(self.symbol.replace("/", ""))
-                    if snapshots is not None:
-                        self.on_regime_update_result(snapshots)
+                    self.on_regime_update(self.symbol.replace("/", ""))
                 except Exception as e:
                     print(f"[ERROR] Market regime update: {e}")
             time.sleep(0.5)
-
-    def on_regime_update_result(self, snapshots):
-        """Hook retained for callers that need to observe completed updates."""
-        return snapshots
