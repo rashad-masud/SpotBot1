@@ -17,8 +17,10 @@ from config.settings import (
     REVERSAL_ENABLED, REVERSAL_MIN_CANDLES, REVERSAL_CONFIRM_CANDLES,
     REVERSAL_SCORE_REQUIRED, REVERSAL_VOLUME_SPIKE,
     REVERSAL_VOLUME_LOOKBACK_CANDLES, REVERSAL_SHORT_TERM_CANDLES,
-    REVERSAL_RSI_FALLING_MAX, RECENT_RETURNS_WINDOW, NUMERIC_EPSILON,
-    DEFAULT_RSI_VALUE, DEFAULT_RELATIVE_VOLUME,
+    REVERSAL_VOLATILITY_LOOKBACK_CANDLES, REVERSAL_RSI_FALLING_MAX,
+    RECENT_RETURNS_WINDOW, NUMERIC_EPSILON, DEFAULT_RSI_VALUE,
+    DEFAULT_RELATIVE_VOLUME, STRATEGY_EMA_FAST_PERIOD,
+    STRATEGY_EMA_SLOW_PERIOD, STRATEGY_RSI_PERIOD, STRATEGY_ATR_PERIOD,
 )
 
 
@@ -112,16 +114,12 @@ class SpotTradeExecutor:
         pnl_pct = pos.pnl_pct(price) / 100.0
         pos.peak_pnl_pct = max(pos.peak_pnl_pct, pnl_pct)
 
-        # Hard stop is always tick-based.
         if price <= pos.entry_price * (1 - pos.stop_pct):
             self._close_position(price, "stop", tick_id, candle_id)
             return True
 
-        # --------------------------------------------------
-        # Early meaningful-profit protection
-        # --------------------------------------------------
-        # Activation is based on the best tick-level PNL, so a short-lived
-        # profit cannot disappear without the executor noticing it.
+        # Early protection activates from the best tick-level PNL. This prevents
+        # a meaningful short-lived gain from being allowed to turn into a loss.
         if (
             EARLY_PROFIT_PROTECTION_ENABLED
             and not getattr(pos, "early_profit_protection_active", False)
@@ -144,9 +142,7 @@ class SpotTradeExecutor:
                 self._close_position(price, reason, tick_id, candle_id)
                 return True
 
-        # --------------------------------------------------
-        # Full trailing profit protection
-        # --------------------------------------------------
+        # Larger-profit protection is a trailing regime, not a fixed target.
         if (
             PROFIT_PROTECTION_ENABLED
             and not pos.profit_protection_active
@@ -165,12 +161,9 @@ class SpotTradeExecutor:
                 return False
             return self._log_in_trade_analysis(pos, price, pnl_pct, candles, candle_id, market_analysis)
 
-        # These protections rise with each new peak. The allowed pullback
-        # narrows as profit grows, while the configured maximum giveback caps risk.
         pos.protected_pnl_pct, trailing_giveback = self._protected_pnl_level(pos)
         pos.protection_price = pos.entry_price * (1 + pos.protected_pnl_pct)
 
-        # Safety exits are tick-based and do not wait for candle/reversal confirmation.
         if pnl_pct <= PROFIT_FLOOR_PCT:
             self._close_position(price, "profit_floor", tick_id, candle_id)
             return True
@@ -203,9 +196,10 @@ class SpotTradeExecutor:
             f"allowed_pullback={trailing_giveback:.2%} "
             f"reversal_score={score}/{REVERSAL_SCORE_REQUIRED} "
             f"confirmation={pos.reversal_confirmation_count}/{REVERSAL_CONFIRM_CANDLES} "
-            f"EMA20={reversal['ema20']:.8f} EMA50={reversal['ema50']:.8f} "
-            f"ema20_slope={reversal['ema20_slope']:.4%} RSI14={reversal['rsi']:.1f} "
-            f"rsi_change={reversal['rsi_change']:.1f} ATR={reversal['atr']:.8f} "
+            f"EMA={STRATEGY_EMA_FAST_PERIOD}/{STRATEGY_EMA_SLOW_PERIOD} "
+            f"RSI{STRATEGY_RSI_PERIOD}={reversal['rsi']:.1f} "
+            f"ema_fast_slope={reversal['ema_fast_slope']:.4%} "
+            f"ATR{STRATEGY_ATR_PERIOD}={reversal['atr']:.8f} "
             f"volatility={reversal['volatility']:.2%} rel_volume={reversal['relative_volume']:.2f} "
             f"trend_strength={reversal['trend_strength']:.2f} signals={active_signals} action=HOLD"
         )
@@ -221,9 +215,10 @@ class SpotTradeExecutor:
         print(
             f"[POSITION ANALYSIS] {pos.symbol} pnl={pnl_pct:.2%} "
             f"peak={pos.peak_pnl_pct:.2%} protection=inactive "
-            f"EMA20={reversal['ema20']:.8f} EMA50={reversal['ema50']:.8f} "
-            f"ema20_slope={reversal['ema20_slope']:.4%} RSI14={reversal['rsi']:.1f} "
-            f"rsi_change={reversal['rsi_change']:.1f} ATR={reversal['atr']:.8f} "
+            f"EMA={STRATEGY_EMA_FAST_PERIOD}/{STRATEGY_EMA_SLOW_PERIOD} "
+            f"RSI{STRATEGY_RSI_PERIOD}={reversal['rsi']:.1f} "
+            f"ema_fast_slope={reversal['ema_fast_slope']:.4%} "
+            f"ATR{STRATEGY_ATR_PERIOD}={reversal['atr']:.8f} "
             f"volatility={reversal['volatility']:.2%} rel_volume={reversal['relative_volume']:.2f} "
             f"trend_strength={reversal['trend_strength']:.2f} action=HOLD"
         )
@@ -231,7 +226,6 @@ class SpotTradeExecutor:
 
     @staticmethod
     def _protected_pnl_level(pos):
-        """Return the rising protected-profit level and current allowed pullback."""
         activation = max(PROFIT_PROTECTION_TRIGGER_PCT, NUMERIC_EPSILON)
         profit_steps = max(0.0, (pos.peak_pnl_pct - activation) / activation)
         progressive_distance = TRAIL_DISTANCE_PCT / (1.0 + profit_steps)
@@ -255,7 +249,8 @@ class SpotTradeExecutor:
         return result
 
     @staticmethod
-    def _rsi(values, period=14):
+    def _rsi(values, period=None):
+        period = period or STRATEGY_RSI_PERIOD
         values = [float(value) for value in values]
         if len(values) < period + 1:
             return DEFAULT_RSI_VALUE
@@ -267,7 +262,8 @@ class SpotTradeExecutor:
         return 100 - (100 / (1 + avg_gain / avg_loss))
 
     @staticmethod
-    def _atr(candles, period=14):
+    def _atr(candles, period=None):
+        period = period or STRATEGY_ATR_PERIOD
         if len(candles) < period + 1:
             return 0.0
         true_ranges = []
@@ -281,11 +277,10 @@ class SpotTradeExecutor:
         return sum(true_ranges) / len(true_ranges)
 
     def _reversal_analysis(self, candles, market_analysis):
-        """Score independent bearish evidence from closed-candle data only."""
         if len(candles) < REVERSAL_MIN_CANDLES:
             return {
                 "score": 0, "active_signals": [], "ema20": 0.0, "ema50": 0.0,
-                "ema20_slope": 0.0, "rsi": DEFAULT_RSI_VALUE, "rsi_change": 0.0,
+                "ema_fast_slope": 0.0, "rsi": DEFAULT_RSI_VALUE, "rsi_change": 0.0,
                 "atr": 0.0, "volatility": 0.0, "relative_volume": DEFAULT_RELATIVE_VOLUME,
                 "trend_strength": 0.0,
             }
@@ -296,15 +291,15 @@ class SpotTradeExecutor:
         current = candles[-1]
         current_open = float(current["open"])
         current_close = closes[-1]
-        ema20 = self._ema(closes, 20)
-        ema50 = self._ema(closes, 50)
-        previous_ema20 = self._ema(closes[:-1], 20)
-        ema20_slope = (ema20 - previous_ema20) / previous_ema20 if previous_ema20 else 0.0
-        rsi = self._rsi(closes, 14)
-        previous_rsi = self._rsi(closes[:-1], 14)
+        ema_fast = self._ema(closes, STRATEGY_EMA_FAST_PERIOD)
+        ema_slow = self._ema(closes, STRATEGY_EMA_SLOW_PERIOD)
+        previous_ema_fast = self._ema(closes[:-1], STRATEGY_EMA_FAST_PERIOD)
+        ema_fast_slope = (ema_fast - previous_ema_fast) / previous_ema_fast if previous_ema_fast else 0.0
+        rsi = self._rsi(closes, STRATEGY_RSI_PERIOD)
+        previous_rsi = self._rsi(closes[:-1], STRATEGY_RSI_PERIOD)
         rsi_change = rsi - previous_rsi
-        atr = self._atr(candles, 14)
-        recent_start = max(1, len(closes) - 14)
+        atr = self._atr(candles, STRATEGY_ATR_PERIOD)
+        recent_start = max(1, len(closes) - REVERSAL_VOLATILITY_LOOKBACK_CANDLES)
         recent_returns = [
             abs((closes[index] - closes[index - 1]) / closes[index - 1])
             for index in range(recent_start, len(closes))
@@ -314,8 +309,9 @@ class SpotTradeExecutor:
         average_volume = sum(volume_lookback) / max(len(volume_lookback), 1)
         relative_volume = volumes[-1] / average_volume if average_volume else DEFAULT_RELATIVE_VOLUME
         short_term_count = REVERSAL_SHORT_TERM_CANDLES
+        short_term_index = -1 - short_term_count
         three_candle_change = (
-            (closes[-1] - closes[-1 - short_term_count]) / closes[-1 - short_term_count]
+            (closes[-1] - closes[short_term_index]) / closes[short_term_index]
             if len(closes) > short_term_count else 0.0
         )
         lower_high = len(highs) >= 3 and highs[-1] < highs[-2] < highs[-3]
@@ -323,8 +319,8 @@ class SpotTradeExecutor:
 
         signals = {
             "bearish_candle": current_close < current_open,
-            "close_below_ema20": current_close < ema20,
-            "ema20_nonpositive_slope": ema20_slope <= 0,
+            "close_below_ema": current_close < ema_fast,
+            "ema_nonpositive_slope": ema_fast_slope <= 0,
             "rsi_falling": rsi_change < 0 and rsi < REVERSAL_RSI_FALLING_MAX,
             "bearish_volume_spike": current_close < current_open and relative_volume >= REVERSAL_VOLUME_SPIKE,
             "lower_high_structure": lower_high,
@@ -333,7 +329,7 @@ class SpotTradeExecutor:
         active_signals = [name for name, active in signals.items() if active]
         return {
             "score": len(active_signals), "active_signals": active_signals,
-            "ema20": ema20, "ema50": ema50, "ema20_slope": ema20_slope,
+            "ema20": ema_fast, "ema50": ema_slow, "ema_fast_slope": ema_fast_slope,
             "rsi": rsi, "rsi_change": rsi_change, "atr": atr,
             "volatility": volatility, "relative_volume": relative_volume,
             "trend_strength": trend_strength,
