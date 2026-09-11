@@ -6,12 +6,19 @@ from core.enums import SignalType
 from trading.tradejournal import TradeJournal
 from config.settings import (
     STARTING_CAPITAL, TAKER_FEE_PCT, RISK_PER_TRADE_PCT,
-    MAX_TOTAL_EXPOSURE_PCT, MIN_STOP_PCT, MAX_STOP_PCT,
-    VOL_STOP_MULTIPLIER,
-    PROFIT_PROTECTION_TRIGGER_PCT, PROFIT_FLOOR_PCT, MAX_PROFIT_GIVEBACK_PCT,
+    MAX_TOTAL_EXPOSURE_PCT, MIN_SIZE_FACTOR, MAX_POSITION_BALANCE_PCT,
+    FEE_RESERVE_PCT, MIN_STOP_PCT, MAX_STOP_PCT, VOL_STOP_MULTIPLIER,
+    EARLY_PROFIT_PROTECTION_ENABLED, EARLY_PROFIT_PROTECTION_TRIGGER_PCT,
+    EARLY_PROFIT_MAX_GIVEBACK_PCT, EARLY_PROFIT_FLOOR_PCT,
+    EARLY_PROFIT_REQUIRE_NONNEGATIVE_PNL,
+    PROFIT_PROTECTION_ENABLED, PROFIT_PROTECTION_TRIGGER_PCT,
+    PROFIT_FLOOR_PCT, MAX_PROFIT_GIVEBACK_PCT,
     PROFIT_TRAIL_ATR_MULTIPLIER, TRAIL_DISTANCE_PCT,
-    REVERSAL_CONFIRM_CANDLES, REVERSAL_SCORE_REQUIRED,
-    REVERSAL_VOLUME_SPIKE,
+    REVERSAL_ENABLED, REVERSAL_MIN_CANDLES, REVERSAL_CONFIRM_CANDLES,
+    REVERSAL_SCORE_REQUIRED, REVERSAL_VOLUME_SPIKE,
+    REVERSAL_VOLUME_LOOKBACK_CANDLES, REVERSAL_SHORT_TERM_CANDLES,
+    REVERSAL_RSI_FALLING_MAX, RECENT_RETURNS_WINDOW, NUMERIC_EPSILON,
+    DEFAULT_RSI_VALUE, DEFAULT_RELATIVE_VOLUME,
 )
 
 
@@ -30,7 +37,7 @@ class SpotTradeExecutor:
         self.daily_pnl = 0.0
         self.journal = TradeJournal()
         self.trade_id_counter = self.journal.next_trade_id() - 1
-        self.recent_returns = deque(maxlen=10)
+        self.recent_returns = deque(maxlen=RECENT_RETURNS_WINDOW)
 
     def execute(self, symbol, signal, price, regime, volatility_pct, size_factor=1.0, candleid=None, tickid=None):
         if self.position or not signal or signal.signal_type != SignalType.LONG:
@@ -39,14 +46,18 @@ class SpotTradeExecutor:
 
     def _open_position(self, symbol, signal, price, regime, volatility_pct, size_factor, candleid, tickid):
         stop_pct = max(MIN_STOP_PCT, min(volatility_pct * VOL_STOP_MULTIPLIER, MAX_STOP_PCT))
-        risk_amount = self.balance * RISK_PER_TRADE_PCT * max(0.1, size_factor)
+        risk_amount = self.balance * RISK_PER_TRADE_PCT * max(MIN_SIZE_FACTOR, size_factor)
         stop_distance = price * stop_pct
         if stop_distance <= 0:
             return False
 
         notional = risk_amount / stop_distance * price
-        notional = min(notional, self.balance * MAX_TOTAL_EXPOSURE_PCT)
-        notional = min(notional, self.balance * 0.98)  # reserve fees
+        notional = min(
+            notional,
+            self.balance * MAX_TOTAL_EXPOSURE_PCT,
+            self.balance * MAX_POSITION_BALANCE_PCT,
+            self.balance * (1.0 - FEE_RESERVE_PCT),
+        )
         if notional <= 0:
             return False
         size = notional / price
@@ -93,12 +104,7 @@ class SpotTradeExecutor:
 
     def manage_position(self, price, candle_return=None, *, tick_id=None, candle_id=None,
                         candles=None, market_analysis=None):
-        """Manage one open position.
-
-        The hard stop and profit-protection safety thresholds run for every
-        price update.  Reversal confirmation is deliberately evaluated only
-        once for each newly closed candle supplied by ``TradingBot.on_candle``.
-        """
+        """Manage one open position using tick-level safety and closed-candle reversal analysis."""
         if not self.position:
             return False
         pos = self.position
@@ -106,34 +112,65 @@ class SpotTradeExecutor:
         pnl_pct = pos.pnl_pct(price) / 100.0
         pos.peak_pnl_pct = max(pos.peak_pnl_pct, pnl_pct)
 
-        # This remains tick-based: candle processing must never postpone risk.
+        # Hard stop is always tick-based.
         if price <= pos.entry_price * (1 - pos.stop_pct):
             self._close_position(price, "stop", tick_id, candle_id)
             return True
 
-        # This is an activation threshold, not an automatic exit.
-        if not pos.profit_protection_active and pnl_pct >= PROFIT_PROTECTION_TRIGGER_PCT:
+        # --------------------------------------------------
+        # Early meaningful-profit protection
+        # --------------------------------------------------
+        # Activation is based on the best tick-level PNL, so a short-lived
+        # profit cannot disappear without the executor noticing it.
+        if (
+            EARLY_PROFIT_PROTECTION_ENABLED
+            and not getattr(pos, "early_profit_protection_active", False)
+            and pos.peak_pnl_pct >= EARLY_PROFIT_PROTECTION_TRIGGER_PCT
+        ):
+            pos.early_profit_protection_active = True
+            print(
+                f"[EARLY PROFIT PROTECTION] activated {pos.symbol} "
+                f"pnl={pnl_pct:.2%} peak={pos.peak_pnl_pct:.2%} "
+                f"trigger={EARLY_PROFIT_PROTECTION_TRIGGER_PCT:.2%}"
+            )
+
+        if EARLY_PROFIT_PROTECTION_ENABLED and getattr(pos, "early_profit_protection_active", False):
+            early_giveback = pos.peak_pnl_pct - pnl_pct
+            floor_breached = pnl_pct <= EARLY_PROFIT_FLOOR_PCT
+            giveback_breached = early_giveback >= EARLY_PROFIT_MAX_GIVEBACK_PCT
+            nonnegative_required = EARLY_PROFIT_REQUIRE_NONNEGATIVE_PNL and pnl_pct < 0
+            if floor_breached or giveback_breached or nonnegative_required:
+                reason = "early_profit_floor" if floor_breached or nonnegative_required else "early_profit_giveback"
+                self._close_position(price, reason, tick_id, candle_id)
+                return True
+
+        # --------------------------------------------------
+        # Full trailing profit protection
+        # --------------------------------------------------
+        if (
+            PROFIT_PROTECTION_ENABLED
+            and not pos.profit_protection_active
+            and pos.peak_pnl_pct >= PROFIT_PROTECTION_TRIGGER_PCT
+        ):
             pos.profit_protection_active = True
-            pos.trail_active = True  # compatibility with existing position state
+            pos.trail_active = True
             print(
                 f"[PROFIT PROTECTION] activated {pos.symbol} "
                 f"pnl={pnl_pct:.2%} peak={pos.peak_pnl_pct:.2%} "
                 f"threshold={PROFIT_PROTECTION_TRIGGER_PCT:.2%}"
             )
 
-        if not pos.profit_protection_active:
-            # Before protection, ticks still update peak PnL but cannot trigger
-            # a profit exit. The hard stop above remains active.
-            return False if not candles or candle_id is None or pos.last_reversal_candle_id == candle_id else self._log_in_trade_analysis(
-                pos, price, pnl_pct, candles, candle_id, market_analysis
-            )
+        if not PROFIT_PROTECTION_ENABLED or not pos.profit_protection_active:
+            if not candles or candle_id is None or pos.last_reversal_candle_id == candle_id:
+                return False
+            return self._log_in_trade_analysis(pos, price, pnl_pct, candles, candle_id, market_analysis)
 
         # These protections rise with each new peak. The allowed pullback
-        # narrows as profit grows, while the maximum giveback stays a hard cap.
+        # narrows as profit grows, while the configured maximum giveback caps risk.
         pos.protected_pnl_pct, trailing_giveback = self._protected_pnl_level(pos)
         pos.protection_price = pos.entry_price * (1 + pos.protected_pnl_pct)
 
-        # Safety exits are tick-based and do not wait for a candle/reversal.
+        # Safety exits are tick-based and do not wait for candle/reversal confirmation.
         if pnl_pct <= PROFIT_FLOOR_PCT:
             self._close_position(price, "profit_floor", tick_id, candle_id)
             return True
@@ -145,7 +182,7 @@ class SpotTradeExecutor:
             self._close_position(price, "profit_protection_stop", tick_id, candle_id)
             return True
 
-        if not candles or candle_id is None or pos.last_reversal_candle_id == candle_id:
+        if not REVERSAL_ENABLED or not candles or candle_id is None or pos.last_reversal_candle_id == candle_id:
             return False
 
         pos.last_reversal_candle_id = candle_id
@@ -194,13 +231,8 @@ class SpotTradeExecutor:
 
     @staticmethod
     def _protected_pnl_level(pos):
-        """Return the rising protected-profit level and current allowed pullback.
-
-        At activation the trade locks a modest profit. Every further profit
-        step reduces the permitted pullback, so the protection level climbs
-        faster than price and cannot loosen after a new high.
-        """
-        activation = max(PROFIT_PROTECTION_TRIGGER_PCT, 1e-9)
+        """Return the rising protected-profit level and current allowed pullback."""
+        activation = max(PROFIT_PROTECTION_TRIGGER_PCT, NUMERIC_EPSILON)
         profit_steps = max(0.0, (pos.peak_pnl_pct - activation) / activation)
         progressive_distance = TRAIL_DISTANCE_PCT / (1.0 + profit_steps)
         volatility_distance = pos.last_atr_pct * PROFIT_TRAIL_ATR_MULTIPLIER
@@ -226,11 +258,11 @@ class SpotTradeExecutor:
     def _rsi(values, period=14):
         values = [float(value) for value in values]
         if len(values) < period + 1:
-            return 50.0
+            return DEFAULT_RSI_VALUE
         changes = [values[i] - values[i - 1] for i in range(-period, 0)]
         avg_gain = sum(max(change, 0.0) for change in changes) / period
         avg_loss = sum(max(-change, 0.0) for change in changes) / period
-        if avg_loss == 0:
+        if avg_loss <= NUMERIC_EPSILON:
             return 100.0
         return 100 - (100 / (1 + avg_gain / avg_loss))
 
@@ -250,11 +282,12 @@ class SpotTradeExecutor:
 
     def _reversal_analysis(self, candles, market_analysis):
         """Score independent bearish evidence from closed-candle data only."""
-        if len(candles) < 21:
+        if len(candles) < REVERSAL_MIN_CANDLES:
             return {
                 "score": 0, "active_signals": [], "ema20": 0.0, "ema50": 0.0,
-                "ema20_slope": 0.0, "rsi": 50.0, "rsi_change": 0.0, "atr": 0.0,
-                "volatility": 0.0, "relative_volume": 1.0, "trend_strength": 0.0,
+                "ema20_slope": 0.0, "rsi": DEFAULT_RSI_VALUE, "rsi_change": 0.0,
+                "atr": 0.0, "volatility": 0.0, "relative_volume": DEFAULT_RELATIVE_VOLUME,
+                "trend_strength": 0.0,
             }
 
         closes = [float(c["close"]) for c in candles]
@@ -271,14 +304,20 @@ class SpotTradeExecutor:
         previous_rsi = self._rsi(closes[:-1], 14)
         rsi_change = rsi - previous_rsi
         atr = self._atr(candles, 14)
+        recent_start = max(1, len(closes) - 14)
         recent_returns = [
             abs((closes[index] - closes[index - 1]) / closes[index - 1])
-            for index in range(max(1, len(closes) - 14), len(closes))
+            for index in range(recent_start, len(closes))
         ]
         volatility = sum(recent_returns) / len(recent_returns) if recent_returns else 0.0
-        average_volume = sum(volumes[-21:-1]) / max(len(volumes[-21:-1]), 1)
-        relative_volume = volumes[-1] / average_volume if average_volume else 1.0
-        three_candle_change = (closes[-1] - closes[-4]) / closes[-4] if len(closes) >= 4 else 0.0
+        volume_lookback = volumes[-REVERSAL_VOLUME_LOOKBACK_CANDLES - 1:-1]
+        average_volume = sum(volume_lookback) / max(len(volume_lookback), 1)
+        relative_volume = volumes[-1] / average_volume if average_volume else DEFAULT_RELATIVE_VOLUME
+        short_term_count = REVERSAL_SHORT_TERM_CANDLES
+        three_candle_change = (
+            (closes[-1] - closes[-1 - short_term_count]) / closes[-1 - short_term_count]
+            if len(closes) > short_term_count else 0.0
+        )
         lower_high = len(highs) >= 3 and highs[-1] < highs[-2] < highs[-3]
         trend_strength = getattr(market_analysis, "trend_strength", 0.0) if market_analysis else 0.0
 
@@ -286,7 +325,7 @@ class SpotTradeExecutor:
             "bearish_candle": current_close < current_open,
             "close_below_ema20": current_close < ema20,
             "ema20_nonpositive_slope": ema20_slope <= 0,
-            "rsi_falling": rsi_change < 0 and rsi < 60,
+            "rsi_falling": rsi_change < 0 and rsi < REVERSAL_RSI_FALLING_MAX,
             "bearish_volume_spike": current_close < current_open and relative_volume >= REVERSAL_VOLUME_SPIKE,
             "lower_high_structure": lower_high,
             "weakening_short_term_trend": three_candle_change <= 0,
