@@ -35,9 +35,9 @@ class SpotTradeExecutor:
     def execute(self, symbol, signal, price, regime, volatility_pct, size_factor=1.0, candleid=None, tickid=None):
         if self.position or not signal or signal.signal_type != SignalType.LONG:
             return False
-        return self._open_position(symbol, price, regime, volatility_pct, size_factor, candleid, tickid)
+        return self._open_position(symbol, signal, price, regime, volatility_pct, size_factor, candleid, tickid)
 
-    def _open_position(self, symbol, price, regime, volatility_pct, size_factor, candleid, tickid):
+    def _open_position(self, symbol, signal, price, regime, volatility_pct, size_factor, candleid, tickid):
         stop_pct = max(MIN_STOP_PCT, min(volatility_pct * VOL_STOP_MULTIPLIER, MAX_STOP_PCT))
         risk_amount = self.balance * RISK_PER_TRADE_PCT * max(0.1, size_factor)
         stop_distance = price * stop_pct
@@ -68,6 +68,7 @@ class SpotTradeExecutor:
         self.trade_id_counter = self.journal.next_trade_id()
         self.position = Position(
             trade_id=self.trade_id_counter,
+            signal_id=signal.signal_id,
             symbol=symbol,
             entry_price=fill_price,
             size=size,
@@ -78,10 +79,16 @@ class SpotTradeExecutor:
             best_price=fill_price,
             last_atr_pct=max(0.0, float(volatility_pct)),
         )
-        self.journal.record_open(symbol, "long", regime, fill_price, size, 1.0, stop_pct,
-                                 trade_id=self.position.trade_id,
-                                 open_candle_id=candleid, open_tick_id=tickid)
-        print(f"[SPOT OPEN] BUY {symbol} size={size:.8f} @ {fill_price:.8f} stop={stop_pct:.2%}")
+        self.journal.record_open(
+            symbol, "long", regime, fill_price, size, 1.0, stop_pct,
+            trade_id=self.position.trade_id,
+            signal_id=self.position.signal_id,
+            open_candle_id=candleid, open_tick_id=tickid,
+        )
+        print(
+            f"[SPOT OPEN] BUY {symbol} size={size:.8f} @ {fill_price:.8f} "
+            f"stop={stop_pct:.2%} signal_id={self.position.signal_id or 'N/A'}"
+        )
         return True
 
     def manage_position(self, price, candle_return=None, *, tick_id=None, candle_id=None,
@@ -315,7 +322,7 @@ class SpotTradeExecutor:
 
         self.daily_pnl += pnl
         self.journal.record_close(
-            trade_id=pos.trade_id, side="long", entry_price=pos.entry_price,
+            trade_id=pos.trade_id, signal_id=pos.signal_id, side="long", entry_price=pos.entry_price,
             exit_price=price if self.paper else fill_price, pnl=pnl,
             balance_after=self.balance, reason=reason,
             open_candle_id=pos.open_candle_id, close_candle_id=candle_id,
@@ -328,45 +335,36 @@ class SpotTradeExecutor:
             f"exit={price:.8f} peak_price={pos.best_price:.8f} "
             f"peak_pnl={pos.peak_pnl_pct:.2%} final_pnl={final_pnl_pct:.2%} "
             f"giveback={giveback:.2%} pnl={pnl:.2f} reason={reason} "
-            f"open_candle={pos.open_candle_id} close_candle={candle_id} "
-            f"open_tick={pos.open_tick_id} close_tick={tick_id} balance={self.balance:.2f}"
+            f"signal_id={pos.signal_id or 'N/A'}"
         )
         self.asset_balance = 0.0
         self.position = None
 
-    def check_stop(self, price):
-        return self.manage_position(price)
-
-    def update_candle_context(self, candle_return, volatility):
-        self.recent_returns.append(candle_return)
+    def _quote_balance(self):
+        if self.exchange is None:
+            return self.balance
+        try:
+            balance = self.exchange.fetch_balance()
+            return float(balance.get("USDT", {}).get("free", self.balance))
+        except Exception:
+            return self.balance
 
     def _market_buy(self, symbol, amount, reference_price):
-        if not self.exchange:
+        if self.exchange is None:
             return None
-        amount = float(self.exchange.amount_to_precision(symbol, amount))
-        if amount <= 0:
-            return None
-        order = self.exchange.create_order(symbol, "market", "buy", amount)
-        return self._extract_fill(order, amount, reference_price)
+        order = self.exchange.create_market_buy_order(symbol, amount)
+        fill_price = float(order.get("average") or order.get("price") or reference_price)
+        filled_size = float(order.get("filled") or amount)
+        fee = order.get("fee") or {}
+        fee_cost = float(fee.get("cost") or (fill_price * filled_size * TAKER_FEE_PCT))
+        return fill_price, filled_size, fee_cost
 
     def _market_sell(self, symbol, amount, reference_price):
-        if not self.exchange:
+        if self.exchange is None:
             return None
-        amount = float(self.exchange.amount_to_precision(symbol, amount))
-        if amount <= 0:
-            return None
-        order = self.exchange.create_order(symbol, "market", "sell", amount)
-        return self._extract_fill(order, amount, reference_price)
-
-    @staticmethod
-    def _extract_fill(order, fallback_amount, fallback_price):
-        amount = float(order.get("filled") or fallback_amount)
-        average = float(order.get("average") or order.get("price") or fallback_price)
-        fee = float((order.get("fee") or {}).get("cost") or 0.0)
-        return average, amount, fee
-
-    def _quote_balance(self):
-        if not self.exchange:
-            return self.balance
-        quote = self.exchange.fetch_balance().get("USDT", {})
-        return float(quote.get("free", 0.0))
+        order = self.exchange.create_market_sell_order(symbol, amount)
+        fill_price = float(order.get("average") or order.get("price") or reference_price)
+        filled_size = float(order.get("filled") or amount)
+        fee = order.get("fee") or {}
+        fee_cost = float(fee.get("cost") or (fill_price * filled_size * TAKER_FEE_PCT))
+        return fill_price, filled_size, fee_cost
