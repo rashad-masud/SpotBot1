@@ -25,7 +25,7 @@ from config.settings import (
 
 
 class SpotTrendPullbackStrategy(BaseStrategy):
-    """Spot trend/pullback strategy driven entirely by config settings."""
+    """Spot trend/pullback strategy with a non-restrictive 60m higher-timeframe veto."""
 
     supported_regimes = STRATEGY_SUPPORTED_REGIMES
 
@@ -52,6 +52,14 @@ class SpotTrendPullbackStrategy(BaseStrategy):
         avg_volume = sum(volume_lookback) / max(len(volume_lookback), 1)
         volume_ratio = volumes[-1] / avg_volume if avg_volume else 1.0
 
+        # The 60m layer is already collected by MultiTimeframeRegimeTracker.
+        # Use it as a safety veto only: a neutral/ranging 60m regime must not
+        # suppress an emerging lower-timeframe bullish opportunity.
+        snapshots = ctx.get("market_regime_snapshots") or {}
+        hourly = snapshots.get("1h")
+        hourly_regime = getattr(hourly, "regime", "UNKNOWN").upper() if hourly else "UNKNOWN"
+        higher_tf_not_bearish = hourly_regime not in {"TREND_DOWN", "BREAKOUT_DOWN"}
+
         bullish_candle = closes[-1] > float(candles[-1]["open"])
         checks = {
             "regime": analysis.gen_trend in self.supported_regimes,
@@ -63,10 +71,11 @@ class SpotTrendPullbackStrategy(BaseStrategy):
             "confirmation": bullish_candle if STRATEGY_CONFIRMATION_REQUIRE_BULLISH_CANDLE else True,
             "constructive_rsi": STRATEGY_RSI_MIN <= rsi <= STRATEGY_RSI_MAX,
             "volume": volume_ratio >= STRATEGY_MIN_VOLUME_RATIO,
+            "higher_tf_not_bearish": higher_tf_not_bearish,
         }
 
         score = sum(checks.values())
-        hard_gates_passed = checks["regime"] and checks["market_tradeable"]
+        hard_gates_passed = checks["regime"] and checks["market_tradeable"] and checks["higher_tf_not_bearish"]
         score_passed = score >= STRATEGY_ENTRY_SCORE_REQUIRED
         eligible = hard_gates_passed and score_passed
 
@@ -75,12 +84,14 @@ class SpotTrendPullbackStrategy(BaseStrategy):
         reason = (
             f"score={score}/{len(checks)} required={STRATEGY_ENTRY_SCORE_REQUIRED}; "
             f"passed={','.join(passed)}; "
-            f"failed={','.join(failed) if failed else 'none'}"
+            f"failed={','.join(failed) if failed else 'none'}; 60m={hourly_regime}"
         )
         if not checks["regime"]:
             reason = f"{reason}; hard_gate=regime:{analysis.gen_trend}"
         elif not checks["market_tradeable"]:
             reason = f"{reason}; hard_gate=market_non_tradeable"
+        elif not checks["higher_tf_not_bearish"]:
+            reason = f"{reason}; hard_gate=60m_bearish"
         elif not score_passed:
             reason = f"{reason}; score_below_threshold"
 
@@ -105,6 +116,7 @@ class SpotTrendPullbackStrategy(BaseStrategy):
             "price_change_pct": analysis.price_change_pct,
             "price_range_pct": analysis.price_range_pct,
             "confidence": analysis.confidence,
+            "higher_tf_regime": hourly_regime,
             "candle_timestamp": candles[-1]["timestamp"],
         }
 
@@ -119,7 +131,8 @@ class SpotTrendPullbackStrategy(BaseStrategy):
             reason=(
                 f"trend-pullback score={report['score']}/{len(report.get('checks', {}))} "
                 f"EMA{STRATEGY_EMA_FAST_PERIOD}/{STRATEGY_EMA_SLOW_PERIOD} "
-                f"RSI={report['rsi']:.1f} vol={report['volume_ratio']:.2f}"
+                f"RSI={report['rsi']:.1f} vol={report['volume_ratio']:.2f} "
+                f"60m={report.get('higher_tf_regime', 'UNKNOWN')}"
             ),
         )
 
