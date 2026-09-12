@@ -25,7 +25,9 @@ MARKET_REGIME_UPDATE_INTERVAL_SECONDS = 60
 MARKET_REGIME_LOG_FILENAME = "market_regimes.txt"
 MARKET_REGIME_DECIMAL_PLACES = 6
 MARKET_REGIME_TREND_THRESHOLD_FACTOR = 0.25
-MARKET_REGIME_MIN_TREND_PCT = 0.001
+# ETH is a high-liquidity major and normally has a smaller 5m directional drift
+# than a high-beta coin such as ZEC. Keep the regime sensitive to real moves.
+MARKET_REGIME_MIN_TREND_PCT = 0.0005
 
 # --------------------------------------------------
 # Runtime / diagnostics
@@ -48,23 +50,21 @@ MAX_POSITION_BALANCE_PCT = 0.98
 FEE_RESERVE_PCT = 0.02
 TAKER_FEE_PCT = 0.001
 
-# Initial stop is volatility-aware, but deliberately bounded so a single
-# trade cannot remain open through an unnecessarily large adverse move.
-# The lower bound prevents normal 1m/5m noise from causing constant stops;
-# the upper bound caps the downside when volatility expands.
-MIN_STOP_PCT = 0.004
-MAX_STOP_PCT = 0.015
+# ETH has tighter normal intraday noise than many altcoins, but stops still
+# remain ATR-driven so volatility expands the stop when the market needs it.
+MIN_STOP_PCT = 0.0035
+MAX_STOP_PCT = 0.0125
 VOL_STOP_MULTIPLIER = 1.5
 
 # --------------------------------------------------
 # Profit management
 # --------------------------------------------------
-# Do not take very small profits simply because price briefly moved in our
-# favour. Early protection only starts after a meaningful move and allows a
-# larger pullback before closing.
+# Start protection once ETH has produced a small but meaningful gain. This is
+# deliberately below the main 1% trailing activation so a short-lived gain
+# cannot turn into a loss while still allowing normal ETH noise.
 EARLY_PROFIT_PROTECTION_ENABLED = True
-EARLY_PROFIT_PROTECTION_TRIGGER_PCT = 0.0050
-EARLY_PROFIT_MAX_GIVEBACK_PCT = 0.0035
+EARLY_PROFIT_PROTECTION_TRIGGER_PCT = 0.0020
+EARLY_PROFIT_MAX_GIVEBACK_PCT = 0.0025
 EARLY_PROFIT_FLOOR_PCT = 0.0
 EARLY_PROFIT_REQUIRE_NONNEGATIVE_PNL = True
 
@@ -74,10 +74,10 @@ PROFIT_PROTECTION_ENABLED = True
 PROFIT_PROTECTION_TRIGGER_PCT = 0.01
 TAKE_PROFIT_PCT = PROFIT_PROTECTION_TRIGGER_PCT
 TRAIL_TRIGGER_PNL = PROFIT_PROTECTION_TRIGGER_PCT
-TRAIL_DISTANCE_PCT = 0.007
+TRAIL_DISTANCE_PCT = 0.006
 PROFIT_TRAIL_ATR_MULTIPLIER = 1.0
 PROFIT_FLOOR_PCT = 0.002
-MAX_PROFIT_GIVEBACK_PCT = 0.006
+MAX_PROFIT_GIVEBACK_PCT = 0.005
 
 # --------------------------------------------------
 # In-trade reversal protection
@@ -99,18 +99,19 @@ REVERSAL_RSI_FALLING_MAX = 60.0
 REGIME_LOOKBACK_CANDLES = 72
 REGIME_CANDLE_TREND_LOOKBACK = 5
 REGIME_CANDLE_TREND_MIN_COUNT = 3
-MIN_TREND_PCT = 0.02
-TREND_STRENGTH_MIN = 2.0
+# 2% over a 6-hour 5m window is too restrictive for a major like ETH.
+MIN_TREND_PCT = 0.005
+TREND_STRENGTH_MIN = 1.8
 MAX_VOLATILITY_TO_AVOID = 0.055
 EXTREME_VOLATILITY_THRESHOLD = 0.035
-MIN_TREND_AGE_TO_TRADE = 3
+MIN_TREND_AGE_TO_TRADE = 2
 REGIME_MIN_CANDLES = REGIME_LOOKBACK_CANDLES
 
 # --------------------------------------------------
 # Entry strategy
 # --------------------------------------------------
 STRATEGY_NAME = "SpotTrendPullbackStrategy"
-STRATEGY_VERSION = "1.6"
+STRATEGY_VERSION = "1.7-eth"
 STRATEGY_MIN_CANDLES = 60
 STRATEGY_EMA_FAST_PERIOD = 20
 STRATEGY_EMA_SLOW_PERIOD = 50
@@ -121,20 +122,26 @@ STRATEGY_RECENT_PULLBACK_EMA_TOLERANCE = 0.003
 STRATEGY_NEAR_PULLBACK_ATR_MULTIPLIER = 2.0
 STRATEGY_CONFIRMATION_REQUIRE_BULLISH_CANDLE = True
 STRATEGY_RSI_MIN = 40.0
-STRATEGY_RSI_MAX = 70.0
+# Strong ETH continuation can legitimately remain above RSI 70; do not reject
+# a healthy momentum move merely because RSI is temporarily elevated.
+STRATEGY_RSI_MAX = 75.0
 STRATEGY_VOLUME_LOOKBACK_CANDLES = 20
-STRATEGY_MIN_VOLUME_RATIO = 0.9
-STRATEGY_ENTRY_SCORE_REQUIRED = 7
+STRATEGY_MIN_VOLUME_RATIO = 0.85
+# One fewer soft condition is appropriate for a liquid major. Regime,
+# tradeability and the 60m bearish veto remain hard gates.
+STRATEGY_ENTRY_SCORE_REQUIRED = 6
 STRATEGY_STRONG_SCORE_THRESHOLD = 8
 STRATEGY_SUPPORTED_REGIMES = {"trend_up", "breakout"}
 
 # --------------------------------------------------
 # Symbol / scanner
 # --------------------------------------------------
-TRADING_SYMBOL = "ZEC/USDT"
+TRADING_SYMBOL = "ETH/USDT"
 TOP_GAINER_COUNT = 10
-MIN_VOLUME_USDT = 1_000_000
-LARGE_CAP_BLACKLIST = {"BTC", "ETH", "SOL", "XRP", "BNB"}
+MIN_VOLUME_USDT = 10_000_000
+# ETH is the configured trading symbol; it must not be excluded by a scanner
+# blacklist if the scanner is reused later.
+LARGE_CAP_BLACKLIST = {"BTC", "SOL", "XRP", "BNB"}
 
 # --------------------------------------------------
 # Logging / formatting
