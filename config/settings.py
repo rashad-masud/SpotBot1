@@ -47,11 +47,6 @@ DEFAULT_SIZE_FACTOR = 1.0
 MAX_POSITION_BALANCE_PCT = 0.98
 FEE_RESERVE_PCT = 0.02
 TAKER_FEE_PCT = 0.001
-
-# Initial stop is volatility-aware, but deliberately bounded so a single
-# trade cannot remain open through an unnecessarily large adverse move.
-# The lower bound prevents normal 1m/5m noise from causing constant stops;
-# the upper bound caps the downside when volatility expands.
 MIN_STOP_PCT = 0.004
 MAX_STOP_PCT = 0.015
 VOL_STOP_MULTIPLIER = 1.5
@@ -59,17 +54,11 @@ VOL_STOP_MULTIPLIER = 1.5
 # --------------------------------------------------
 # Profit management
 # --------------------------------------------------
-# Do not take very small profits simply because price briefly moved in our
-# favour. Early protection only starts after a meaningful move and allows a
-# larger pullback before closing.
 EARLY_PROFIT_PROTECTION_ENABLED = True
 EARLY_PROFIT_PROTECTION_TRIGGER_PCT = 0.0050
 EARLY_PROFIT_MAX_GIVEBACK_PCT = 0.0035
 EARLY_PROFIT_FLOOR_PCT = 0.0
 EARLY_PROFIT_REQUIRE_NONNEGATIVE_PNL = True
-
-# Once the trade has reached +1%, switch to progressive trailing protection
-# rather than using a fixed take-profit target. This lets strong trends run.
 PROFIT_PROTECTION_ENABLED = True
 PROFIT_PROTECTION_TRIGGER_PCT = 0.01
 TAKE_PROFIT_PCT = PROFIT_PROTECTION_TRIGGER_PCT
@@ -110,7 +99,7 @@ REGIME_MIN_CANDLES = REGIME_LOOKBACK_CANDLES
 # Entry strategy
 # --------------------------------------------------
 STRATEGY_NAME = "SpotTrendPullbackStrategy"
-STRATEGY_VERSION = "1.6"
+STRATEGY_VERSION = "1.7-experiment"
 STRATEGY_MIN_CANDLES = 60
 STRATEGY_EMA_FAST_PERIOD = 20
 STRATEGY_EMA_SLOW_PERIOD = 50
@@ -127,6 +116,16 @@ STRATEGY_MIN_VOLUME_RATIO = 0.9
 STRATEGY_ENTRY_SCORE_REQUIRED = 7
 STRATEGY_STRONG_SCORE_THRESHOLD = 8
 STRATEGY_SUPPORTED_REGIMES = {"trend_up", "breakout"}
+
+# Experimental entry quality controls.
+# The goal is to reduce same-direction churn immediately after a profitable exit
+# and avoid buying an already extended move.
+REENTRY_COOLDOWN_ENABLED = True
+REENTRY_COOLDOWN_SECONDS = 600
+REENTRY_REQUIRE_NEW_BREAKOUT = True
+REENTRY_MIN_PRICE_IMPROVEMENT_ATR = 0.50
+ENTRY_EXTENSION_FILTER_ENABLED = True
+ENTRY_EXTENSION_MAX_ATR = 1.75
 
 # --------------------------------------------------
 # Symbol / scanner

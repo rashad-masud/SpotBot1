@@ -21,6 +21,8 @@ from config.settings import (
     RECENT_RETURNS_WINDOW, NUMERIC_EPSILON, DEFAULT_RSI_VALUE,
     DEFAULT_RELATIVE_VOLUME, STRATEGY_EMA_FAST_PERIOD,
     STRATEGY_EMA_SLOW_PERIOD, STRATEGY_RSI_PERIOD, STRATEGY_ATR_PERIOD,
+    REENTRY_COOLDOWN_ENABLED, REENTRY_COOLDOWN_SECONDS,
+    REENTRY_REQUIRE_NEW_BREAKOUT, REENTRY_MIN_PRICE_IMPROVEMENT_ATR,
 )
 
 
@@ -40,11 +42,68 @@ class SpotTradeExecutor:
         self.journal = TradeJournal()
         self.trade_id_counter = self.journal.next_trade_id() - 1
         self.recent_returns = deque(maxlen=RECENT_RETURNS_WINDOW)
+        self.last_closed_trade = None
 
-    def execute(self, symbol, signal, price, regime, volatility_pct, size_factor=1.0, candleid=None, tickid=None):
+        # Seed re-entry state from the latest closed journal entry so a restart
+        # does not immediately repeat a same-direction trade.
+        try:
+            latest = self.journal.latest_trade()
+        except AttributeError:
+            latest = None
+        if latest:
+            self.last_closed_trade = latest
+
+    def execute(self, symbol, signal, price, regime, volatility_pct, size_factor=1.0, candleid=None, tickid=None,
+                *, market_analysis=None, candles=None):
         if self.position or not signal or signal.signal_type != SignalType.LONG:
             return False
+
+        if not self._reentry_allowed(symbol, signal, price, volatility_pct, regime, candles):
+            return False
+
         return self._open_position(symbol, signal, price, regime, volatility_pct, size_factor, candleid, tickid)
+
+    def _reentry_allowed(self, symbol, signal, price, volatility_pct, regime, candles):
+        """Prevent immediate same-direction churn after a completed trade.
+
+        We deliberately do not block every re-entry. After a cooldown, a new
+        structural breakout or sufficient price displacement can reset the
+        setup and permit a fresh trade.
+        """
+        if not REENTRY_COOLDOWN_ENABLED or not self.last_closed_trade:
+            return True
+
+        last = self.last_closed_trade
+        if str(last.get("symbol", symbol)) != symbol or str(last.get("side", "long")).lower() != "long":
+            return True
+
+        closed_at = float(last.get("closed_at", last.get("timestamp", 0)) or 0)
+        now = time.time()
+        age = max(0.0, now - closed_at) if closed_at else REENTRY_COOLDOWN_SECONDS + 1
+        pnl = float(last.get("pnl", 0.0) or 0.0)
+        entry = float(last.get("entry_price", 0.0) or 0.0)
+        exit_price = float(last.get("exit_price", 0.0) or 0.0)
+        atr = max(price * max(float(volatility_pct), 0.0), NUMERIC_EPSILON)
+
+        if age >= REENTRY_COOLDOWN_SECONDS:
+            return True
+
+        # Losing exits may be retried sooner only when price has materially
+        # displaced from the prior entry, avoiding instant revenge/churn trades.
+        if pnl <= 0 and entry > 0 and abs(price - entry) >= atr * REENTRY_MIN_PRICE_IMPROVEMENT_ATR:
+            return True
+
+        if REENTRY_REQUIRE_NEW_BREAKOUT and candles:
+            closes = [float(c["close"]) for c in candles]
+            if len(closes) >= 21 and price > max(closes[-21:-1]):
+                return True
+
+        print(
+            f"[ENTRY BLOCKED] {symbol} same-direction re-entry cooldown "
+            f"age={age:.0f}s/{REENTRY_COOLDOWN_SECONDS}s last_pnl={pnl:.2f} "
+            f"last_entry={entry:.8f} last_exit={exit_price:.8f} regime={regime}"
+        )
+        return False
 
     def _open_position(self, symbol, signal, price, regime, volatility_pct, size_factor, candleid, tickid):
         stop_pct = max(MIN_STOP_PCT, min(volatility_pct * VOL_STOP_MULTIPLIER, MAX_STOP_PCT))
@@ -91,6 +150,9 @@ class SpotTradeExecutor:
             open_tick_id=tickid,
             best_price=fill_price,
             last_atr_pct=max(0.0, float(volatility_pct)),
+            entry_regime=regime,
+            entry_atr=max(0.0, float(volatility_pct)),
+            entry_trigger_timestamp=time.time(),
         )
         self.journal.record_open(
             symbol, "long", regime, fill_price, size, 1.0, stop_pct,
@@ -118,8 +180,6 @@ class SpotTradeExecutor:
             self._close_position(price, "stop", tick_id, candle_id)
             return True
 
-        # Early protection activates from the best tick-level PNL. This prevents
-        # a meaningful short-lived gain from being allowed to turn into a loss.
         if (
             EARLY_PROFIT_PROTECTION_ENABLED
             and not getattr(pos, "early_profit_protection_active", False)
@@ -142,7 +202,6 @@ class SpotTradeExecutor:
                 self._close_position(price, reason, tick_id, candle_id)
                 return True
 
-        # Larger-profit protection is a trailing regime, not a fixed target.
         if (
             PROFIT_PROTECTION_ENABLED
             and not pos.profit_protection_active
@@ -356,22 +415,32 @@ class SpotTradeExecutor:
             self.balance = self._quote_balance()
 
         self.daily_pnl += pnl
+        close_price = price if self.paper else fill_price
         self.journal.record_close(
             trade_id=pos.trade_id, signal_id=pos.signal_id, side="long", entry_price=pos.entry_price,
-            exit_price=price if self.paper else fill_price, pnl=pnl,
+            exit_price=close_price, pnl=pnl,
             balance_after=self.balance, reason=reason,
             open_candle_id=pos.open_candle_id, close_candle_id=candle_id,
             open_tick_id=pos.open_tick_id, close_tick_id=tick_id,
         )
-        final_pnl_pct = pos.pnl_pct(price) / 100.0
+        final_pnl_pct = pos.pnl_pct(close_price) / 100.0
         giveback = max(0.0, pos.peak_pnl_pct - final_pnl_pct)
         print(
             f"[SPOT CLOSE] SELL {pos.symbol} entry={pos.entry_price:.8f} "
-            f"exit={price:.8f} peak_price={pos.best_price:.8f} "
+            f"exit={close_price:.8f} peak_price={pos.best_price:.8f} "
             f"peak_pnl={pos.peak_pnl_pct:.2%} final_pnl={final_pnl_pct:.2%} "
             f"giveback={giveback:.2%} pnl={pnl:.2f} reason={reason} "
             f"signal_id={pos.signal_id or 'N/A'}"
         )
+        self.last_closed_trade = {
+            "symbol": pos.symbol,
+            "side": "long",
+            "entry_price": pos.entry_price,
+            "exit_price": close_price,
+            "pnl": pnl,
+            "closed_at": time.time(),
+            "reason": reason,
+        }
         self.asset_balance = 0.0
         self.position = None
 

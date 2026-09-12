@@ -28,6 +28,12 @@ class Position:
     max_profit: float = 0.0
     max_drawdown: float = 0.0
     last_updated: Optional[float] = None
+    entry_regime: Optional[str] = None
+    entry_atr: float = 0.0
+
+    # Entry-quality experiment state. Stored on the position so the executor
+    # can use exact trade history without relying on global mutable state.
+    entry_trigger_timestamp: Optional[float] = None
 
     def __post_init__(self):
         if self.best_price is None:

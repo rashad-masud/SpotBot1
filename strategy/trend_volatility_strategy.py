@@ -21,6 +21,8 @@ from config.settings import (
     STRATEGY_NAME,
     STRATEGY_VERSION,
     DEFAULT_SIZE_FACTOR,
+    ENTRY_EXTENSION_FILTER_ENABLED,
+    ENTRY_EXTENSION_MAX_ATR,
 )
 
 
@@ -53,6 +55,11 @@ class SpotTrendPullbackStrategy(BaseStrategy):
         volume_ratio = volumes[-1] / avg_volume if avg_volume else 1.0
 
         bullish_candle = closes[-1] > float(candles[-1]["open"])
+        extension_atr = abs(price - ema_fast) / atr if atr > 0 else 0.0
+        not_overextended = (
+            not ENTRY_EXTENSION_FILTER_ENABLED
+            or extension_atr <= ENTRY_EXTENSION_MAX_ATR
+        )
         checks = {
             "regime": analysis.gen_trend in self.supported_regimes,
             "market_tradeable": bool(analysis.should_trade),
@@ -63,6 +70,7 @@ class SpotTrendPullbackStrategy(BaseStrategy):
             "confirmation": bullish_candle if STRATEGY_CONFIRMATION_REQUIRE_BULLISH_CANDLE else True,
             "constructive_rsi": STRATEGY_RSI_MIN <= rsi <= STRATEGY_RSI_MAX,
             "volume": volume_ratio >= STRATEGY_MIN_VOLUME_RATIO,
+            "not_overextended": not_overextended,
         }
 
         score = sum(checks.values())
@@ -75,7 +83,8 @@ class SpotTrendPullbackStrategy(BaseStrategy):
         reason = (
             f"score={score}/{len(checks)} required={STRATEGY_ENTRY_SCORE_REQUIRED}; "
             f"passed={','.join(passed)}; "
-            f"failed={','.join(failed) if failed else 'none'}"
+            f"failed={','.join(failed) if failed else 'none'}; "
+            f"extension_atr={extension_atr:.2f} max={ENTRY_EXTENSION_MAX_ATR:.2f}"
         )
         if not checks["regime"]:
             reason = f"{reason}; hard_gate=regime:{analysis.gen_trend}"
@@ -83,6 +92,8 @@ class SpotTrendPullbackStrategy(BaseStrategy):
             reason = f"{reason}; hard_gate=market_non_tradeable"
         elif not score_passed:
             reason = f"{reason}; score_below_threshold"
+        elif not not_overextended:
+            reason = f"{reason}; hard_gate=overextended"
 
         return {
             "signal": "BUY" if eligible else "WAIT",
@@ -97,6 +108,7 @@ class SpotTrendPullbackStrategy(BaseStrategy):
             "ema50": ema_slow,
             "rsi": rsi,
             "atr": atr,
+            "extension_atr": extension_atr,
             "volume_ratio": volume_ratio,
             "trend": analysis.gen_trend,
             "trend_strength": analysis.trend_strength,
@@ -119,7 +131,8 @@ class SpotTrendPullbackStrategy(BaseStrategy):
             reason=(
                 f"trend-pullback score={report['score']}/{len(report.get('checks', {}))} "
                 f"EMA{STRATEGY_EMA_FAST_PERIOD}/{STRATEGY_EMA_SLOW_PERIOD} "
-                f"RSI={report['rsi']:.1f} vol={report['volume_ratio']:.2f}"
+                f"RSI={report['rsi']:.1f} vol={report['volume_ratio']:.2f} "
+                f"extension={report['extension_atr']:.2f}ATR"
             ),
         )
 

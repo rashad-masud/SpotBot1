@@ -31,7 +31,6 @@ class TradingBot:
         self.market_regime_snapshots = {}
 
     def on_market_regime_update(self, snapshots):
-        """Receive the latest multi-timeframe market-structure snapshot."""
         self.market_regime_snapshots = snapshots or {}
         if not DIAGNOSTIC_LOGGING:
             return
@@ -56,7 +55,6 @@ class TradingBot:
                 self.on_trade_closed()
 
     def on_in_trade_candle(self, symbol, candle):
-        """Process only a newly closed dedicated in-trade analysis candle."""
         self.in_trade_signal_engine.update(symbol, candle)
         if not self.executor.position:
             return
@@ -87,14 +85,14 @@ class TradingBot:
         print(
             f"  EMA20={report.get('ema20', 0):.8f} EMA50={report.get('ema50', 0):.8f} "
             f"RSI={report.get('rsi', 0):.1f} ATR={report.get('atr', 0):.8f} "
-            f"rel_volume={report.get('volume_ratio', 0):.2f}"
+            f"rel_volume={report.get('volume_ratio', 0):.2f} "
+            f"extension={report.get('extension_atr', 0):.2f}ATR"
         )
         if checks:
             print("  " + " ".join(f"{name}={'OK' if ok else 'NO'}" for name, ok in checks.items()))
         print(f"  DECISION={report.get('signal')} | {report.get('reason')}")
 
     def _log_signal(self, symbol, signal_type, report, action_taken="NONE"):
-        """Log a meaningful signal transition with a complete market snapshot."""
         signal_state = (
             signal_type,
             round(float(report.get("price", 0.0)), SIGNAL_DECIMAL_PLACES),
@@ -104,16 +102,11 @@ class TradingBot:
             round(float(report.get("rsi", 0.0)), SIGNAL_STATE_DECIMAL_PLACES),
             round(float(report.get("atr", 0.0)), SIGNAL_DECIMAL_PLACES),
             round(float(report.get("volume_ratio", 0.0)), SIGNAL_STATE_DECIMAL_PLACES),
-            report.get("trend"),
-            report.get("trend_age"),
-            report.get("score"),
-            report.get("score_required"),
-            report.get("checks", {}),
+            report.get("trend"), report.get("trend_age"),
+            report.get("score"), report.get("score_required"), report.get("checks", {}),
         )
-
         if self._last_logged_signal_state.get(symbol) == signal_state:
             return None
-
         signal_id = self.signal_logger.generate_signal_id(symbol)
         record = SignalRecord(
             timestamp=datetime.now(timezone.utc).isoformat(),
@@ -126,13 +119,11 @@ class TradingBot:
             strength=("STRONG" if report.get("score", 0) >= STRONG_SIGNAL_SCORE_MINIMUM else DEFAULT_SIGNAL_STRENGTH),
             action_taken=action_taken,
             indicators={
-                "ema_fast": report.get("ema_fast"),
-                "ema_slow": report.get("ema_slow"),
-                "ema20": report.get("ema20"),
-                "ema50": report.get("ema50"),
-                "rsi": report.get("rsi"),
-                "atr": report.get("atr"),
+                "ema_fast": report.get("ema_fast"), "ema_slow": report.get("ema_slow"),
+                "ema20": report.get("ema20"), "ema50": report.get("ema50"),
+                "rsi": report.get("rsi"), "atr": report.get("atr"),
                 "volume_ratio": report.get("volume_ratio"),
+                "extension_atr": report.get("extension_atr"),
             },
             strategy_metadata={
                 "strategy": self.strategy.name,
@@ -140,18 +131,15 @@ class TradingBot:
                 "score": report.get("score"),
                 "score_required": report.get("score_required"),
                 "checks": report.get("checks", {}),
+                "extension_atr": report.get("extension_atr"),
             },
             market_context={
-                "trend": report.get("trend"),
-                "trend_strength": report.get("trend_strength"),
-                "trend_age": report.get("trend_age"),
-                "volatility_pct": report.get("volatility_pct"),
-                "price_change_pct": report.get("price_change_pct"),
-                "price_range_pct": report.get("price_range_pct"),
+                "trend": report.get("trend"), "trend_strength": report.get("trend_strength"),
+                "trend_age": report.get("trend_age"), "volatility_pct": report.get("volatility_pct"),
+                "price_change_pct": report.get("price_change_pct"), "price_range_pct": report.get("price_range_pct"),
                 "candle_timestamp": report.get("candle_timestamp"),
                 "multi_timeframe_regime": {
-                    timeframe: snapshot.to_dict()
-                    for timeframe, snapshot in self.market_regime_snapshots.items()
+                    timeframe: snapshot.to_dict() for timeframe, snapshot in self.market_regime_snapshots.items()
                 },
             },
             risk_level=DEFAULT_RISK_LEVEL,
@@ -181,13 +169,10 @@ class TradingBot:
 
         report = self.strategy.explain({"symbol": symbol, "candles": candles, "analysis": analysis})
         self._print_decision_report(symbol, report)
-
         signal_type = report.get("signal")
         if signal_type not in {"BUY", "WAIT"}:
             return
-
         logged_signal_id = self._log_signal(symbol, signal_type, report)
-
         if signal_type != "BUY":
             return
 
@@ -199,10 +184,8 @@ class TradingBot:
             opened = self.executor.execute(
                 symbol, signal, candle["close"], analysis.gen_trend,
                 analysis.volatility_pct, size_factor=signal.size_factor,
-                candleid=self.current_candle_id, tickid=self.tick_id
+                candleid=self.current_candle_id, tickid=self.tick_id,
+                market_analysis=analysis, candles=candles,
             )
             if logged_signal_id:
-                self.signal_logger.update_signal_action(
-                    logged_signal_id,
-                    "OPENED" if opened else "IGNORED",
-                )
+                self.signal_logger.update_signal_action(logged_signal_id, "OPENED" if opened else "IGNORED")
