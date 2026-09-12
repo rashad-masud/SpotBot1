@@ -13,8 +13,8 @@ This version has been converted from a futures/shorting bot into a **Binance spo
   profit-floor / maximum-giveback safety limits. The hard stop remains tick-based.
 - Exchange precision is applied to live market orders.
 - Secrets are loaded from environment variables; no credentials are stored in source code.
-- Entry analysis defaults to 5m; active in-trade analysis defaults to 1m for faster reversal detection on volatile coins.
-- Scanner looks for liquid top-gainers that have subsequently produced a bullish pullback setup.
+- Entry analysis defaults to 5m; active in-trade analysis defaults to 1m for faster reversal detection.
+- The configured ETH/USDT test is fixed-pair mode, so scanner ranking does not silently replace ETH with another asset.
 
 ## Strategy
 
@@ -26,6 +26,9 @@ This version has been converted from a futures/shorting bot into a **Binance spo
 - recent price-action confirmation
 - relative volume filter
 - regime filter from `SignalEngine`
+- 15m/30m structure plus a non-restrictive 60m bearish safety veto
+
+The ETH configuration is deliberately less restrictive than the earlier ZEC-oriented settings: major-asset trend thresholds are lower, elevated-but-healthy RSI is accepted, and the soft entry score is reduced while regime/tradeability/60m safety remain hard gates.
 
 This is intentionally conservative. It is **not presented as a profitable strategy without testing**.
 
@@ -56,13 +59,12 @@ python main.py
 
 Copy `.env.example` to `.env` and load it with your preferred environment-variable mechanism. Never commit real API keys.
 
-
 ## Fixed-pair mode
 
-Set `TRADING_SYMBOL` in the environment to trade one specific Binance spot pair. For example:
+The current paper test is configured for one specific Binance spot pair:
 
 ```text
-TRADING_SYMBOL=ZEC/USDT
+TRADING_SYMBOL=ETH/USDT
 ```
 
 When `TRADING_SYMBOL` is set, the bot validates that the pair exists, is active, and is a spot market, then bypasses the automatic liquid top-gainer scanner. Leave it empty to use scanner mode.
@@ -85,12 +87,12 @@ The original file is not modified by this utility.
 
 ## Strategy diagnostics
 
-Set `DIAGNOSTIC_LOGGING=true` to print a structured decision report for each newly closed live candle. The report shows the trend, trend age, EMA20/EMA50, RSI, ATR, relative volume, volatility, each entry condition, and the final BUY/WAIT decision. Historical warm-up candles never create orders.
+Set `DIAGNOSTIC_LOGGING=true` to print a structured decision report for each newly closed live candle. The report shows the trend, trend age, EMA20/EMA50, RSI, ATR, relative volume, volatility, each entry condition, the higher-timeframe regime and the final BUY/WAIT decision. Historical warm-up candles never create orders.
 
-Recommended paper settings for an initial single-pair test:
+Recommended paper settings for the current ETH single-pair test:
 
 ```env
-TRADING_SYMBOL=ZEC/USDT
+TRADING_SYMBOL=ETH/USDT
 PAPER_TRADE=true
 TIMEFRAME=5m
 HISTORICAL_CANDLE_ANALYSIS=24h
@@ -101,23 +103,24 @@ DIAGNOSTIC_LOGGING=true
 
 ## Profit protection
 
-The default profit-management settings are:
+The ETH-tuned profit-management settings are:
 
 ```env
+EARLY_PROFIT_PROTECTION_ENABLED=true
+EARLY_PROFIT_PROTECTION_TRIGGER_PCT=0.002
+EARLY_PROFIT_MAX_GIVEBACK_PCT=0.0025
+EARLY_PROFIT_FLOOR_PCT=0.0
+
 PROFIT_PROTECTION_TRIGGER_PCT=0.01
-# TAKE_PROFIT_PCT is retained as a legacy alias.
 TAKE_PROFIT_PCT=0.01
 TRAIL_TRIGGER_PNL=0.01
-TRAIL_DISTANCE_PCT=0.007
+TRAIL_DISTANCE_PCT=0.006
 PROFIT_FLOOR_PCT=0.002
-MAX_PROFIT_GIVEBACK_PCT=0.004
+MAX_PROFIT_GIVEBACK_PCT=0.005
 REVERSAL_CONFIRM_CANDLES=3
 REVERSAL_SCORE_REQUIRED=4
 REVERSAL_VOLUME_SPIKE=1.20
 ```
 
-The compatibility trail trigger now matches the 1% protection activation.
-The protected stop begins by locking a small profit, rises with every new peak,
-and tightens its allowed pullback as profit increases. Reversal scoring is calculated only from newly closed 1-minute candles by default;
-price ticks still enforce the hard stop and all profit-protection safety exits immediately.
+The early protection layer is intentionally independent of the main 1% trailing activation: once a trade has briefly reached about +0.2%, a subsequent loss of the peak or a return through zero can close it. The main 1% layer still lets stronger ETH trends run rather than taking profit at exactly 1%.
 Both entry and in-trade timeframes are configurable independently.
