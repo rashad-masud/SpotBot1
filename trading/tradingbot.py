@@ -87,7 +87,7 @@ class TradingBot:
         print(
             f"  EMA20={report.get('ema20', 0):.8f} EMA50={report.get('ema50', 0):.8f} "
             f"RSI={report.get('rsi', 0):.1f} ATR={report.get('atr', 0):.8f} "
-            f"rel_volume={report.get('volume_ratio', 0):.2f}"
+            f"rel_volume={report.get('volume_ratio', 0):.2f} 60m={report.get('higher_tf_regime', 'UNKNOWN')}"
         )
         if checks:
             print("  " + " ".join(f"{name}={'OK' if ok else 'NO'}" for name, ok in checks.items()))
@@ -140,6 +140,7 @@ class TradingBot:
                 "score": report.get("score"),
                 "score_required": report.get("score_required"),
                 "checks": report.get("checks", {}),
+                "higher_tf_regime": report.get("higher_tf_regime", "UNKNOWN"),
             },
             market_context={
                 "trend": report.get("trend"),
@@ -149,6 +150,7 @@ class TradingBot:
                 "price_change_pct": report.get("price_change_pct"),
                 "price_range_pct": report.get("price_range_pct"),
                 "candle_timestamp": report.get("candle_timestamp"),
+                "higher_tf_regime": report.get("higher_tf_regime", "UNKNOWN"),
                 "multi_timeframe_regime": {
                     timeframe: snapshot.to_dict()
                     for timeframe, snapshot in self.market_regime_snapshots.items()
@@ -160,6 +162,14 @@ class TradingBot:
         self.signal_logger.log_signal(record)
         self._last_logged_signal_state[symbol] = signal_state
         return signal_id
+
+    def _strategy_context(self, symbol, candles, analysis):
+        return {
+            "symbol": symbol,
+            "candles": candles,
+            "analysis": analysis,
+            "market_regime_snapshots": self.market_regime_snapshots,
+        }
 
     def on_candle(self, symbol, candle):
         self.current_candle_id = candle["timestamp"]
@@ -173,13 +183,14 @@ class TradingBot:
         if self.executor.position:
             return
 
+        context = self._strategy_context(symbol, candles, analysis)
         if self.live_candle_count == 1 and not ALLOW_ENTRY_ON_FIRST_LIVE_CANDLE:
-            report = self.strategy.explain({"symbol": symbol, "candles": candles, "analysis": analysis})
+            report = self.strategy.explain(context)
             self._print_decision_report(symbol, report, first_live=True)
             print(f"[WARMUP] First live closed candle for {symbol}; entry skipped.")
             return
 
-        report = self.strategy.explain({"symbol": symbol, "candles": candles, "analysis": analysis})
+        report = self.strategy.explain(context)
         self._print_decision_report(symbol, report)
 
         signal_type = report.get("signal")
